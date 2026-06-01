@@ -1133,6 +1133,8 @@ class Cell_Analyzer:
         
         if os.path.exists(pkl) and roi_type in (None, 'pkl'):
             linked_rois = pd.read_pickle(pkl)
+            if 'label' not in linked_rois.columns:
+                linked_rois['label'] = linked_rois['cell_id']
             bbox = linked_rois.groupby('label').agg(
                     bbox_x0=('x','min'),
                     bbox_x1=('x','max'),
