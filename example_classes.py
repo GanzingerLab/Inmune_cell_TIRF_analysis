@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from postSPIT import plotting_classes as plc
+from postSPIT import tirf_analysis as plc
 import os
 from glob import glob
 import pandas as pd
