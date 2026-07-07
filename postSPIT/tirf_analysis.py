@@ -3917,43 +3917,47 @@ class Dataset_tracked_folder:
             # Recursively walk through the directory tree under each condition
             for dirpath, dirnames, _ in os.walk(cond_path):
                 for dirname in dirnames:
-                    if run_pattern.match(dirname):  # Check if the folder matches 'RunXXXX'
-                        run_folder = os.path.join(dirpath, dirname)
-                        # Try to find a YAML file in the run folder (used to get min_len_track)
-                        yaml_files = glob(run_folder + '/**/*_colocsTracks.yaml', recursive=True)
-                        if yaml_files:
-                            yaml_data = self._openyaml(yaml_files)
-                            min_len_track = yaml_data.get("min_len_track", 5)  # Default to 5 if key missing
+                    try:
+                        if run_pattern.match(dirname):  # Check if the folder matches 'RunXXXX'
+                            run_folder = os.path.join(dirpath, dirname)
+                            # Try to find a YAML file in the run folder (used to get min_len_track)
+                            yaml_files = glob(run_folder + '/**/*_colocsTracks.yaml', recursive=True)
+                            if yaml_files:
+                                yaml_data = self._openyaml(yaml_files)
+                                min_len_track = yaml_data.get("min_len_track", 5)  # Default to 5 if key missing
 
-                        # Load tracking data using 
-                        a = Single_tracked_folder(run_folder, ch0_hint, ch1_hint).open_files()
-                        print(run_folder)
-                        # Count tracks in channel 0 that meet the length threshold
-                        if isinstance(a.stats0, pd.DataFrame):
-                            ch0_tracks = a.stats0[a.stats0.loc_count >= min_len_track].shape[0]
-                        else: 
-                            ch0_tracks = 0
-                        if isinstance(a.stats1, pd.DataFrame):
-                            ch1_tracks = a.stats1[a.stats1.loc_count >= min_len_track].shape[0]
-                        else: 
-                            ch1_tracks = 0
-                        try:
-                            # Count colocalized tracks if the attribute exists
-                            coloc_count = a.coloc_stats.shape[0] if hasattr(a, 'coloc_stats') else 0
-                            
-                        except Exception as e:
-                            # If loading fails, assume 0 tracks
-                            coloc_count = 0
+                            # Load tracking data using 
+                            a = Single_tracked_folder(run_folder, ch0_hint, ch1_hint).open_files()
+                            print(run_folder)
+                            # Count tracks in channel 0 that meet the length threshold
+                            if isinstance(a.stats0, pd.DataFrame):
+                                ch0_tracks = a.stats0[a.stats0.loc_count >= min_len_track].shape[0]
+                            else: 
+                                ch0_tracks = 0
+                            if isinstance(a.stats1, pd.DataFrame):
+                                ch1_tracks = a.stats1[a.stats1.loc_count >= min_len_track].shape[0]
+                            else: 
+                                ch1_tracks = 0
+                            try:
+                                # Count colocalized tracks if the attribute exists
+                                coloc_count = a.coloc_stats.shape[0] if hasattr(a, 'coloc_stats') else 0
+                                
+                            except Exception as e:
+                                # If loading fails, assume 0 tracks
+                                coloc_count = 0
 
-                        # Append the results for this run folder
-                        results.append({
-                            "folder": run_folder,
-                            "condition": cond_name,
-                            "colocalized_tracks": coloc_count,
-                            "ch0_tracks": ch0_tracks,
-                            "ch1_tracks": ch1_tracks,
-                            "min_len_track": min_len_track
-                        })
+                            # Append the results for this run folder
+                            results.append({
+                                "folder": run_folder,
+                                "condition": cond_name,
+                                "colocalized_tracks": coloc_count,
+                                "ch0_tracks": ch0_tracks,
+                                "ch1_tracks": ch1_tracks,
+                                "min_len_track": min_len_track
+                            })
+                    except Exception as e:
+                        print(e)
+                        continue
 
         # Convert the list of dictionaries into a pandas DataFrame
         self.result_count = pd.DataFrame(results)
