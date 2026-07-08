@@ -126,12 +126,6 @@ def test_expected_methods_on_cell_analyzer():
         "split_cells",
         "analyze_clusters_protein",
         "predict_maturation",
-        "get_time_interval",
-        "_li_threshold",
-        "_otsu_threshold",
-        "_phansalkar_threshold",
-        "_create_mask",
-        "_summarize_clusters_per_cell_frame",
     ]
 
     for method_name in expected_methods:

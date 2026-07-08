@@ -9,7 +9,7 @@ from glob import glob
 from spit import tools
 from tqdm import tqdm
 
-from .io_utils import get_nm2px, get_time_interval, openyaml
+from .io_utils import get_time_interval, openyaml
 from .combined import Combined_analysis
 from .tracked import Single_tracked_folder
 from .plotting import BoxPlotter, HistogramPlotter
@@ -68,7 +68,7 @@ class Dataset_combined_analysis:
         self.run_paths = []
         self._collect_run_paths()
         path_yaml = glob(self.folder + r'/**/*_colocsTracks.yaml', recursive=True)
-        general_yaml_file = self._openyaml(path_yaml)
+        general_yaml_file = openyaml(path_yaml)
         self.ch0_hint = general_yaml_file['ch0']+'nm'
         self.ch1_hint = general_yaml_file['ch1']+'nm'
         
@@ -472,7 +472,7 @@ class Dataset_combined_analysis:
             Minimum number of frames a track must persist to be included. Default is 10.
         frame_rate : float, optional
             Frame rate (in seconds per frame) used to convert dwell times to seconds.
-            If available, it is automatically determined using :meth:`_get_frame_rate`.
+            If available, it is automatically determined using `get_time_interval()`.
             Default is 1.
         max_dist : int, optional
             Maximum allowed inter-channel distance (in nanometers) to consider tracks
@@ -506,7 +506,7 @@ class Dataset_combined_analysis:
         """
         all_dwell = []
         try:
-            frame_rate = self._get_frame_rate()
+            frame_rate = get_time_interval(self.folder)
         except: 
             frame_rate = frame_rate
         hist = HistogramPlotter(xlabel="dwell_time(sec)", ylabel="Frequency")
@@ -627,10 +627,6 @@ class Dataset_combined_analysis:
                 print(f"- {folder}: {error}")
         else:
             print("All folders processed successfully.")
-    def _get_nm2px(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
-        return get_nm2px(self.folder)
-    def _get_frame_rate(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
-        return get_time_interval(self.folder)
            
     def _count_run_folders_recursive(self, root_folder):
         pattern = re.compile(r'^Run\d+$')
@@ -641,12 +637,10 @@ class Dataset_combined_analysis:
                 if pattern.match(dirname):
                     count += 1
         return count
-    def _openyaml(self, name):
-        return openyaml(name)
     def validate(self):
         print("Just a reminder that most of the time the whole dataset should be analyzed using the same parameters.")
         print("Here are the parameters for the first folder in the dataset that has colocalized tracks:")
-        yaml = self._openyaml(glob(self.folder + r'/**/*_colocsTracks.yaml', recursive=True))
+        yaml = openyaml(glob(self.folder + r'/**/*_colocsTracks.yaml', recursive=True))
         for i, j in enumerate(yaml.items()):
             print(f"{j[0]}: {j[1]}")
 
@@ -676,7 +670,7 @@ class Dataset_tracked_folder:
         results = []  # This will store the data for each run folder
         run_pattern = re.compile(r'^Run\d+$')  # Regex to identify folders like 'Run0001'
         path_yaml = glob(self.folder + r'/**/*_colocsTracks.yaml', recursive=True)
-        general_yaml_file = self._openyaml(path_yaml)
+        general_yaml_file = openyaml(path_yaml)
         ch0_hint = general_yaml_file['ch0']
         ch1_hint = general_yaml_file['ch1']
         min_len_track = general_yaml_file["min_len_track"]
@@ -691,7 +685,7 @@ class Dataset_tracked_folder:
                             # Try to find a YAML file in the run folder (used to get min_len_track)
                             yaml_files = glob(run_folder + '/**/*_colocsTracks.yaml', recursive=True)
                             if yaml_files:
-                                yaml_data = self._openyaml(yaml_files)
+                                yaml_data = openyaml(yaml_files)
                                 min_len_track = yaml_data.get("min_len_track", 5)  # Default to 5 if key missing
 
                             # Load tracking data using 
@@ -765,7 +759,7 @@ class Dataset_tracked_folder:
         return final_ds, box
     def get_dwell(self, min_len = 10, ref = 'ch0', x0=0, xt=None, y0=0, yt=None):
         all_dwell = []
-        frame_rate = self._get_frame_rate()
+        frame_rate = get_time_interval(self.folder)
         hist = HistogramPlotter( xlabel="dwell_time(sec)", ylabel="Frequency")
         for i, cond in tqdm(zip(self._conditions_paths, self.conditions_to_use), desc='Extracting Ds...\n'):
             print(f'\nAnalyzing {i}...')
@@ -774,7 +768,7 @@ class Dataset_tracked_folder:
             paths_locs = list(set(os.path.dirname(file) for file in pathshdf))
             for j in tqdm(paths_locs):
                 pathsyaml = glob(j + '/**/**colocsTracks.yaml', recursive=True)
-                yaml = self._openyaml(pathsyaml)
+                yaml = openyaml(pathsyaml)
                 image = Single_tracked_folder(j).open_files()
                 dwell = image.extract_dwell(frame_rate = frame_rate, min_len = min_len, max_dist = yaml['th'], ref = ref)
                 if isinstance(dwell, pd.DataFrame):
@@ -795,13 +789,9 @@ class Dataset_tracked_folder:
     def validate(self):
         print("Just a reminder that most of the time the whole dataset should be analyzed using the same parameters.")
         print("Here are the parameters for the first folder in the dataset that has colocalized tracks:")
-        yaml = self._openyaml(glob(self.folder + r'/**/*_colocsTracks.yaml', recursive=True))
+        yaml = openyaml(glob(self.folder + r'/**/*_colocsTracks.yaml', recursive=True))
         for i, j in enumerate(yaml.items()):
             print(f"{j[0]}: {j[1]}")
-    def _get_nm2px(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
-        return get_nm2px(self.folder)
-    def _get_frame_rate(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
-        return get_time_interval(self.folder)
            
     def _count_run_folders_recursive(self, root_folder):
         pattern = re.compile(r'^Run\d+$')
@@ -812,5 +802,3 @@ class Dataset_tracked_folder:
                 if pattern.match(dirname):
                     count += 1
         return count
-    def _openyaml(self, name):
-       return openyaml(name)

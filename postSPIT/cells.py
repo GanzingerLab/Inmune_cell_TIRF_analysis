@@ -16,8 +16,6 @@ from natsort import natsorted
 from pandas.errors import PerformanceWarning
 from picasso.io import load_movie
 from scipy.optimize import curve_fit
-from scipy.stats import linregress
-from sklearn.metrics import r2_score
 
 from skimage.measure import label, regionprops
 from skimage.morphology import (
@@ -33,6 +31,14 @@ from .image_processing import (
     create_mask,
     paint_square,
     contour_min_distance,
+)
+
+from .stats_utils import (
+    sigmoid,
+    classify_maturation,
+    select_frames,
+    summarize_clusters_per_cell_frame,
+    summarize_per_track,
 )
 
 from spit import tools
@@ -84,7 +90,7 @@ class Cell_Analyzer:
     """
     def __init__(self, folder, ch0_wl=None, ch1_wl=None, roi_type = None):
         self.folder = folder 
-        self.nm2px = self._get_nm2px()
+        self.nm2px = get_nm2px(self.folder)
 
         # load images into dict by wavelength
         paths = glob(self.folder + '/**/*nm.tif', recursive=True)
@@ -167,12 +173,6 @@ class Cell_Analyzer:
             if os.path.exists(maturation_json):
                 with open(maturation_json, "r") as f:
                     self.maturation[ch] = pd.DataFrame(json.load(f))
-
-    def _get_nm2px(self):
-        return get_nm2px(self.folder)
-    
-    def get_time_interval(self):
-        return get_time_interval(self.folder)
             
     def _get_contour(self, cell_id, frame):
         key = (cell_id, frame)
@@ -426,7 +426,7 @@ class Cell_Analyzer:
             linked_df = pd.DataFrame()
             linked_stats = pd.DataFrame()
         else:
-            results_stats = self._summarize_clusters_per_cell_frame(result)
+            results_stats = summarize_clusters_per_cell_frame(result)
             df_tp = result.rename(columns={"centroid_col": "x", "centroid_row": "y", "norm_sum_int": "mass", "area": "size"})
             df_tp['label'] = result['label']
     
@@ -438,7 +438,7 @@ class Cell_Analyzer:
                 linked_all.append(linked)
     
             linked_df = pd.concat(linked_all, ignore_index=True)
-            linked_stats = self._summarize_per_track(linked_df)
+            linked_stats = summarize_per_track(linked_df)
         self.result_cluster_analysis[wl] = result
         self.summary_cluster_analysis[wl] = results_stats
         self.linked_clusters[wl] = linked_df
@@ -522,13 +522,13 @@ class Cell_Analyzer:
             x_data = np.array(range(video.shape[0]))
             fit_success = True
             try:
-                popt, pcov = curve_fit(self._sigmoid, x_data, predictions, p0=[1, 0, 1, 0], maxfev=10000)
-                y_fit = self._sigmoid(x_data, *popt)
+                popt, pcov = curve_fit(sigmoid, x_data, predictions, p0=[1, 0, 1, 0], maxfev=10000)
+                y_fit = sigmoid(x_data, *popt)
             except RuntimeError:
                 print(f"Fit failed for: {self.folder}, cell: {cell_id}")
                 fit_success = False
                 y_fit = None  # or skip plotting
-            category, features = self._classify_maturation(predictions, fit = y_fit, 
+            category, features = classify_maturation(predictions, fit = y_fit, 
                                                     fit_success = fit_success, r2_thresh = r2_thresh, smooth_window=N_rolling, 
                                                                             low_thresh=low_thresh, high_thresh=high_thresh) 
             r2 = features['r2']
@@ -556,7 +556,7 @@ class Cell_Analyzer:
                         ax_curve.axvline(x=x_cross, color="#55A868", linestyle='--', label=f'Crosses 0.5 at x={x_cross:.0f}')
 
             crossing_frame = int(x_cross) if x_cross is not None else None
-            selected_indices = self._select_frames(len(video), crossing_frame)
+            selected_indices = select_frames(len(video), crossing_frame)
 
             rolling_avg = np.convolve(predictions, np.ones(N_rolling)/N_rolling, mode='valid')
             ax_curve.plot(range(N_rolling-1, len(predictions)), rolling_avg,
@@ -634,30 +634,7 @@ class Cell_Analyzer:
         CSV.to_csv(os.path.join(save_folder, f"maturation_{wl}.csv"), index = False)
         self.maturation[wl] = results_df
         return results_df
-    def _sigmoid(self, x, L, x0, k, b):
-        """
-            Sigmoid function for fitting maturation probabilities.
-        
-            Parameters
-            ----------
-            x : array-like
-                Input values (frame indices).
-            L : float
-                Maximum value of the sigmoid.
-            x0 : float
-                Sigmoid midpoint.
-            k : float
-                Steepness of the curve.
-            b : float
-                Baseline offset.
-        
-            Returns
-            -------
-            array-like
-                Sigmoid-transformed values corresponding to `x`.
-    """
-        z = np.clip(-k * (x - x0), -500, 500)  # prevent overflow
-        return L / (1 + np.exp(z)) + b
+    
     def _preprocess_frame(self, frame, target_size=(224, 224)):
         """
             Preprocess a single grayscale frame for model input.
@@ -681,217 +658,6 @@ class Cell_Analyzer:
         frame_rgb = cv2.resize(frame_rgb, target_size)  # resize to model input
         frame_rgb = np.expand_dims(frame_rgb, axis=0)   # add batch dimension
         return frame_rgb
-    def _classify_maturation(self, prob, fit = None, fit_success = False, r2_thresh = 0.75, smooth_window=5, 
-                            low_thresh=0.4, high_thresh=0.6):
-        """
-    Classify a cell's maturation probability curve into categories.
-
-    Parameters
-    ----------
-    prob : np.ndarray
-        Probability values per frame (0-1).
-    fit : np.ndarray, optional
-        Sigmoid fit of probabilities, by default None.
-    fit_success : bool, optional
-        Whether sigmoid fitting succeeded, by default False.
-    r2_thresh : float, optional
-        Minimum R² for using fit instead of raw probabilities, by default 0.75.
-    smooth_window : int, optional
-        Rolling average window for smoothing, by default 5.
-    low_thresh : float, optional
-        Lower threshold for classification, by default 0.4.
-    high_thresh : float, optional
-        Upper threshold for classification, by default 0.6.
-
-    Returns
-    -------
-    category : int
-        Maturation class (0: never, 1: matures, 2: starts mature, 3: not classifiable).
-    features : dict
-        Extracted metrics such as p_start, p_end, delta, n_crossings, r2, etc.
-    """
-        r2 = None
-        features = {}
-        if fit_success:
-            if fit is not None:
-                r2 = r2_score(prob, fit)
-                residuals = prob - fit
-                if r2 > r2_thresh:
-                    probabilities = fit
-                    smooth_window = 1
-                    features["std_residuals"] = np.std(residuals)
-                else:
-                    features["std_curve"] = np.std(prob)
-                    probabilities = prob
-            else:
-                print('fit is None, using raw probabilities')
-                features["std_curve"] = np.std(prob)
-                probabilities = prob
-        else:
-            print('fit failed, using raw probabilities')
-            features["std_curve"] = np.std(prob)
-            probabilities = prob
-
-        features['r2'] = r2
-        # Smooth
-        if smooth_window > 1:
-            kernel = np.ones(smooth_window) / smooth_window
-            prob_smooth = np.convolve(probabilities, kernel, mode='same')
-        else:
-            prob_smooth = probabilities.copy()
-
-        # Features
-        N_edge = max(3, smooth_window)  # use first/last few points
-        p_start = np.mean(prob_smooth[:N_edge])
-        p_end   = np.mean(prob_smooth[-N_edge:])
-        p_max   = np.max(prob_smooth)
-        p_min   = np.min(prob_smooth)
-        delta   = p_end - p_start
-
-        # Count threshold crossings at 0.5
-        crossings = np.where(np.diff((prob_smooth > 0.5).astype(int)) != 0)[0]
-        n_crossings = len(crossings)
-
-        # Classification rules
-        if p_max < low_thresh:
-            category = 0
-        elif p_start < low_thresh and p_end > high_thresh and delta > 0.4:
-            category = 1
-        elif p_start > high_thresh and p_min > low_thresh:
-            category = 2
-        else:
-            category = 3
-
-        features.update({
-        "p_start": p_start,
-        "p_end": p_end,
-        "p_max": p_max,
-        "p_min": p_min,
-        "delta": delta,
-        "n_crossings": n_crossings
-    })
-
-        return category, features
-    def _select_frames(self, n_frames, crossing_frame=None, min_gap=15):
-        """
-            Select representative frames for plotting or analysis.
-        
-            Parameters
-            ----------
-            n_frames : int
-                Total number of frames in the video.
-            crossing_frame : int or None, optional
-                Frame where maturation probability crosses 0.5, by default None.
-            min_gap : int, optional
-                Minimum gap from edges to consider crossing_frame, by default 15.
-        
-            Returns
-            -------
-            list
-                Selected frame indices (up to 5 frames).
-    """
-        if n_frames < 5:
-            # Not enough frames, just return all
-            return list(range(n_frames))
-
-        first, last = 0, n_frames - 1
-
-        if crossing_frame is not None and min_gap <= crossing_frame <= n_frames - 1 - min_gap:
-            mid = crossing_frame
-            # 2 is midway between 1 and 3
-            second = (first + mid) // 2
-            # 4 is midway between 3 and 5
-            fourth = (mid + last) // 2
-            return [first, second, mid, fourth, last]
-        else:
-            # No valid crossing, just pick 5 equally spaced
-            return [0, n_frames//4, n_frames//2, 3*n_frames//4, n_frames-1]
-    
-    def _summarize_clusters_per_cell_frame(self, result_df):
-        """
-            Summarize cluster measurements per cell and per frame by averaging and 
-            calculating the std of the different parameters.
-        
-            Parameters
-            ----------
-            result_df : pd.DataFrame
-                Detailed cluster measurements.
-        
-            Returns
-            -------
-            pd.DataFrame
-                Summary statistics per cell per frame.
-        """
-        summary_rows = []
-
-        for (cell_id, frame), group in result_df.groupby(['cell_id', 'frame']):
-            weights = group['area'] * group['norm_med_int']
-            summary = {
-                'cell_id': cell_id,
-                'frame': frame,
-                'num_clusters': len(group),
-                'area_mean': self._weighted_mean(group['area'], weights),
-                'area_safe_std': self._safe_std(group['area']),
-                'sum_int_mean': self._weighted_mean(group['sum_int'], weights),
-                'sum_int_safe_std': self._safe_std(group['sum_int']),
-                'norm_sum_int_mean': self._weighted_mean(group['norm_sum_int'], weights),
-                'norm_sum_int_safe_std': self._safe_std(group['norm_sum_int']),
-                'med_int_mean': self._weighted_mean(group['med_int'], weights),
-                'med_int_safe_std': self._safe_std(group['med_int']),
-                'norm_med_int_mean': self._weighted_mean(group['norm_med_int'], weights),
-                'norm_med_int_safe_std': self._safe_std(group['norm_med_int']),
-                'dist_cent_mean': self._weighted_mean(group['dist_cent'], weights),
-                'dist_cent_safe_std': self._safe_std(group['dist_cent']),
-                'solidity_mean': self._weighted_mean(group['solidity'], weights),
-                'solidity_safe_std': self._safe_std(group['solidity']),
-                'perimeter_mean': self._weighted_mean(group['perimeter'], weights),
-                'perimeter_safe_std': self._safe_std(group['perimeter']),
-                'circularity_mean': self._weighted_mean(group['circularity'], weights),
-                'circularity_safe_std': self._safe_std(group['circularity']),
-                'aspect_ratio_mean': self._weighted_mean(group['aspect_ratio'], weights),
-                'aspect_ratio_safe_std': self._safe_std(group['aspect_ratio']),
-                'eccentricity_mean': self._weighted_mean(group['eccentricity'], weights),
-                'eccentricity_safe_std': self._safe_std(group['eccentricity']),
-                'extent_mean': self._weighted_mean(group['extent'], weights),
-                'extent_safe_std': self._safe_std(group['extent']),
-            }
-            summary_rows.append(summary)
-
-        return pd.DataFrame(summary_rows) 
-    
-    def _weighted_mean(self, x, weights):
-        """
-            Compute a weighted mean if there is any valid value, if not it returns NaN.
-        
-            Parameters
-            ----------
-            x : array-like
-                Data values.
-            weights : array-like
-                Corresponding weights.
-        
-            Returns
-            -------
-            float
-                Weighted mean, or NaN if weights sum to 0.
-            """
-        return np.average(x, weights=weights) if len(x) > 0 and np.sum(weights) > 0 else np.nan
-    
-    def _safe_std(self, x):
-        """
-            Compute standard deviation if there is any valid value, if not it returns 0.
-        
-            Parameters
-            ----------
-            x : array-like
-                Data values.
-        
-            Returns
-            -------
-            float
-                Standard deviation or 0 if insufficient data.
-    """
-        return x.std() if len(x) > 1 else 0
     
     def _save_centroid_videos_per_cell(self, clusters_binary, all_props, sep_cells, ch='ch0', square_size=3, output_dir='cluster_analysis', filtered_spots=None):
         
@@ -978,80 +744,6 @@ class Cell_Analyzer:
             tifffile.imwrite(orig_path, np.array(orig_stack), photometric='rgb')
             tifffile.imwrite(bin_path, np.array(bin_stack), photometric='rgb')
             # print(f"Saved Cell {cell_id} to:\n- {orig_path}\n- {bin_path}")      
-    
-    def _summarize_per_track(self, linked_df, min_frames=5):
-        features = []
-        
-        for (cell_id, particle), group in linked_df.groupby(['cell_id', 'particle']):
-            group = group.sort_values('frame')
-            if len(group) < min_frames:
-                continue
-    
-            frames = group['frame'].values
-            # Convert coordinates to nanometers
-            x = group['x'].values * self.nm2px
-            y = group['y'].values * self.nm2px
-            dists_to_center = group['dist_cent'].values  # already in nm if set that way
-            
-            # Compute frame-to-frame displacements and instantaneous speeds
-            dx = np.diff(x)
-            dy = np.diff(y)
-            disp = np.sqrt(dx**2 + dy**2)  # instantaneous displacement (nm)
-            
-            total_distance = np.sum(disp)
-            net_displacement = np.linalg.norm([x[-1] - x[0], y[-1] - y[0]])
-            directionality_ratio = net_displacement / total_distance if total_distance > 0 else 0
-            # TODO: convert frame difference to actual time if needed
-            duration = frames[-1] - frames[0]
-            speed = total_distance / duration if duration > 0 else 0  # mean speed (nm per frame)
-    
-            # Radial regression from dists_to_center vs frames (slope in nm per frame)
-            slope, intercept, r_value, p_value, std_err = linregress(frames, dists_to_center)
-    
-            # Compute instantaneous angles for movement
-            angles = np.arctan2(dy, dx)
-            # Differences between successive angles (turning angles)
-            angle_diff = np.diff(angles)  
-            # Unwrap to reduce artefactual jumps at ±pi
-            angle_diff = np.unwrap(angle_diff)
-            angle_var = np.var(angle_diff)  # overall variance
-    
-            # --- New Temporal Features ---
-            # Instantaneous speed trend: regression on disp versus frame (for frames[1:])
-            if len(disp) > 1:
-                speed_reg = linregress(frames[1:], disp)
-                speed_slope = speed_reg.slope  # change in instantaneous speed (nm per frame^2)
-            else:
-                speed_slope = np.nan
-    
-            # Turning rate trend: regression on absolute turning angles versus index (0, 1, 2,...)
-            if len(angle_diff) > 1:
-                turning_reg = linregress(np.arange(len(angle_diff)), np.abs(angle_diff))
-                turning_rate_slope = turning_reg.slope  # change in turning (radians per frame)
-            else:
-                turning_rate_slope = np.nan
-    
-            # Bounding box area (in nm^2)
-            bbox_area = (np.max(x) - np.min(x)) * (np.max(y) - np.min(y))
-            
-            features.append({
-                'cell_id': cell_id,
-                'particle': particle,
-                'track_duration': duration,
-                'mean_speed': speed,
-                'net_displacement': net_displacement,
-                'directionality_ratio': directionality_ratio,
-                'radial_slope': slope,
-                'radial_r_squared': r_value**2,
-                'radial_change': dists_to_center[-1] - dists_to_center[0],
-                'angle_variance': angle_var,
-                'motion_bbox_area': bbox_area,
-                # New features capturing temporal trends:
-                'speed_slope': speed_slope,
-                'turning_rate_slope': turning_rate_slope,
-            })
-        
-        return pd.DataFrame(features)
     
     def _detect_splits_and_merges(self, linked_df, distance_threshold=20, frame_gap=1):
         linked_df = linked_df.copy()

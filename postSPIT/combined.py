@@ -10,6 +10,7 @@ from spit import linking as link
 from spit import tools
 from tqdm import tqdm
 
+from .io_utils import openyaml
 from .cells import Cell_Analyzer
 from .tracked import Single_tracked_folder
 
@@ -56,7 +57,8 @@ class Combined_analysis:
     def __init__(self, folder, ch0_hint = None, ch1_hint = None, verbose = True):
         self.folder = folder
         self.tracked_folder = Single_tracked_folder(folder, ch0_hint = ch0_hint, ch1_hint = ch1_hint) # your tracked spots
-        yaml_file = self.tracked_folder._openyaml()
+        yaml_files = glob(self.folder + '/**/**_colocsTracks.yaml', recursive=True)
+        yaml_file = openyaml(yaml_files) if yaml_files else False
         ch0_laser = None
         if yaml_file:
             ch0_laser = yaml_file['ch0']

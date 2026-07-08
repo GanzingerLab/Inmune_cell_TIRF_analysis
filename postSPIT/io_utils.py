@@ -58,10 +58,33 @@ def get_time_interval(folder):
         return dt
 
 def openyaml(name):
-    # Load YAML content if found
-    with open(name[0], 'r') as file:
+    """
+    Open a YAML file or list of YAML files and merge all YAML documents.
+
+    Parameters
+    ----------
+    name : list[str] or str
+        Path to a YAML file, or list of matching YAML files.
+
+    Returns
+    -------
+    dict or bool
+        Parsed YAML data. Returns False if no file is provided.
+    """
+    if not name:
+        return False
+
+    if isinstance(name, (list, tuple)):
+        yaml_path = name[0]
+    else:
+        yaml_path = name
+
+    with open(yaml_path, "r") as file:
         data_parts = list(yaml.safe_load_all(file))
-    yaml_data = {}
+
+    data = {}
     for part in data_parts:
-        yaml_data.update(part)
-    return yaml_data
+        if part:
+            data.update(part)
+
+    return data

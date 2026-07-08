@@ -1,11 +1,9 @@
 import os
-import yaml
 import numpy as np
 import pandas as pd
-from .io_utils import get_nm2px
+from .io_utils import get_nm2px, openyaml
 from glob import glob
 from picasso.io import TiffMultiMap, load_movie
-from spit import tools
 
 from .plotting import LinePlotter, TrackPlotter
 
@@ -349,7 +347,8 @@ class Single_tracked_folder:
             Tracked_image
                 An instance of Tracked_image containing the loaded movie(s), track data, and statistics.
     """
-        yaml_file = self._openyaml()
+        yaml_files = glob(self.folder + '/**/**_colocsTracks.yaml', recursive=True)
+        yaml_file = openyaml(yaml_files) if yaml_files else False
         if yaml_file:
             ch0_laser = yaml_file['ch0']
             ch1_laser = yaml_file['ch1']
@@ -371,7 +370,7 @@ class Single_tracked_folder:
                                    stats1,
                                    coloc_tracks,
                                    coloc_stats, 
-                                   self._get_nm2px(),   
+                                   get_nm2px(self.folder),   
                                    self.folder
                                    )
             return image1
@@ -398,7 +397,7 @@ class Single_tracked_folder:
                                    ch1, 
                                    tracks1, 
                                    stats1, 
-                                   nm2px = self._get_nm2px(), 
+                                   nm2px = get_nm2px(self.folder), 
                                    folder = self.folder
                                    )
             return image1
@@ -410,7 +409,7 @@ class Single_tracked_folder:
                                    ch0,
                                    tracks0, 
                                    stats0,
-                                   nm2px = self._get_nm2px(), 
+                                   nm2px = get_nm2px(self.folder), 
                                    folder = self.folder
                                    )
             return image1
@@ -440,22 +439,10 @@ class Single_tracked_folder:
         for i in csvs:
             print(i)
         if coloc_tracks:
-            yaml_file = self._openyaml()
+            yaml_files = glob(self.folder + '/**/**_colocsTracks.yaml', recursive=True)
+            yaml_file = openyaml(yaml_files) if yaml_files else False
             ch0_laser = yaml_file['ch0']
             print(f'\nThe tarcks have been colocalized with {ch0_laser}nm as reference channel')
 
         else:
             print('The tracks have not been colocalized')   
-    def _openyaml(self):
-        name = glob(self.folder + '/**/**_colocsTracks.yaml', recursive=True)
-        if name:
-            with open(name[0], 'r') as file:
-                data_parts = list(yaml.safe_load_all(file))
-            data = {}
-            for i in data_parts:
-                data.update(i)
-            return data
-        else:
-            return False
-    def _get_nm2px(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
-        return get_nm2px(self.folder)
