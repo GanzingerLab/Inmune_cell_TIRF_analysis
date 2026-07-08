@@ -30,7 +30,6 @@ from .image_processing import (
     otsu_threshold,
     phansalkar_threshold,
     remove_small_objects_per_frame,
-    remove_small_holes_per_frame,
     create_mask,
     paint_square,
     contour_min_distance,
@@ -325,22 +324,22 @@ class Cell_Analyzer:
             to_work = self.sep_cells[cell_id][wl]
     
             if 'li' in th_method:
-                global_mask = self._li_threshold(to_work, mode=global_th_mode)
+                global_mask = li_threshold(to_work, mode=global_th_mode)
             elif 'otsu' in th_method:
-                global_mask = self._otsu_threshold(to_work, mode=global_th_mode)
+                global_mask = otsu_threshold(to_work, mode=global_th_mode)
             else:
                 raise ValueError(f'{th_method} is not a valid thresholding method')
     
             if 'local' in th_method:
-                local_mask = self._phansalkar_threshold(to_work, radius=window_size, p=p, q=q)
-                binary_stack = self._remove_small_objects_per_frame(
+                local_mask = phansalkar_threshold(to_work, radius=window_size, p=p, q=q)
+                binary_stack = remove_small_objects_per_frame(
                     binary_opening(binary_closing(local_mask & global_mask)), min_size=min_size
                 )
             else:
                 binary_stack = global_mask
     
             clusters_binary[cell_id] = binary_stack
-            # mask = self._create_mask(to_work[0].shape, self.contour[cell_id])
+            # mask = create_mask(to_work[0].shape, self.contour[cell_id])
     
             if cell_id not in self.cluster_contours:
                 self.cluster_contours[cell_id] = {}
@@ -349,7 +348,7 @@ class Cell_Analyzer:
                 if frame_num not in self.cluster_contours[cell_id]:
                     self.cluster_contours[cell_id][frame_num] = {}
     
-                mask = self._create_mask(to_work[0].shape, self._get_contour(cell_id, frame_num))
+                mask = create_mask(to_work[0].shape, self._get_contour(cell_id, frame_num))
                 labeled = label(binary_frame)
 
                 for region in regionprops(labeled, intensity_image=to_work[frame_num]):
@@ -808,22 +807,6 @@ class Cell_Analyzer:
             # No valid crossing, just pick 5 equally spaced
             return [0, n_frames//4, n_frames//2, 3*n_frames//4, n_frames-1]
     
-    def _li_threshold(self, image, mode = "max"):
-        return li_threshold(image, mode=mode)
-   
-    def _otsu_threshold(self, image, mode = "max"): 
-        return otsu_threshold(image, mode=mode)
-    
-    def _phansalkar_threshold(self, image_stack, radius=15, k=0.25, p=2.0, q=10.0):
-        return phansalkar_threshold(image_stack, radius=radius, k=k, p=p, q=q)
-    
-    
-    def _remove_small_objects_per_frame(self, stack, min_size=100, connectivity=1):
-        return remove_small_objects_per_frame(stack, min_size=min_size, connectivity=connectivity)
-    
-    def _remove_small_holes_per_frame(self, stack, min_size=100, connectivity=1):
-        return remove_small_holes_per_frame(stack, min_size=min_size, connectivity=connectivity)
-    
     def _summarize_clusters_per_cell_frame(self, result_df):
         """
             Summarize cluster measurements per cell and per frame by averaging and 
@@ -976,15 +959,15 @@ class Cell_Analyzer:
                 frame_props = cell_props[cell_props['frame'] == frame_num]
                 for _, row in frame_props.iterrows():
                     r, c = int(round(row['centroid_row'])), int(round(row['centroid_col']))
-                    self._paint_red_square(orig_rgb, (r, c), size=square_size)
-                    self._paint_red_square(bin_rgb, (r, c), size=square_size)
+                    paint_square(orig_rgb, (r, c), size=square_size)
+                    paint_square(bin_rgb, (r, c), size=square_size)
     
                 if filtered_spots is not None:
                     frame_spots = cell_spots[cell_spots['t'] == frame_num]
                     for _, spot in frame_spots.iterrows():
                         r, c = int(round(spot['y_per_cell'])), int(round(spot['x_per_cell']))
-                        self._paint_red_square(orig_rgb, (r, c), size=square_size, color=[255, 255, 0])
-                        self._paint_red_square(bin_rgb, (r, c), size=square_size, color=[255, 255, 0])
+                        paint_square(orig_rgb, (r, c), size=square_size, color=[255, 255, 0])
+                        paint_square(bin_rgb, (r, c), size=square_size, color=[255, 255, 0])
     
                 orig_stack.append(orig_rgb)
                 bin_stack.append(bin_rgb)
@@ -994,13 +977,7 @@ class Cell_Analyzer:
     
             tifffile.imwrite(orig_path, np.array(orig_stack), photometric='rgb')
             tifffile.imwrite(bin_path, np.array(bin_stack), photometric='rgb')
-            # print(f"Saved Cell {cell_id} to:\n- {orig_path}\n- {bin_path}")
-    
-    def _paint_red_square(self, image, center, size=1, color=None):
-        return paint_square(image, center, size=size, color=color)        
-    
-    def _create_mask(self, image_shape, contour):
-        return create_mask(image_shape, contour)
+            # print(f"Saved Cell {cell_id} to:\n- {orig_path}\n- {bin_path}")      
     
     def _summarize_per_track(self, linked_df, min_frames=5):
         features = []
@@ -1108,7 +1085,7 @@ class Cell_Analyzer:
             for next_part, next_cnt in next_contours.items():
                 close_parents = []
                 for cur_part, cur_cnt in current_contours.items():
-                    dist = self._contour_min_distance(cur_cnt, next_cnt)
+                    dist = contour_min_distance(cur_cnt, next_cnt)
                     if dist < distance_threshold:
                         close_parents.append(cur_part)
                 if len(close_parents) > 1:
@@ -1121,7 +1098,7 @@ class Cell_Analyzer:
             for cur_part, cur_cnt in current_contours.items():
                 close_children = []
                 for next_part, next_cnt in next_contours.items():
-                    dist = self._contour_min_distance(cur_cnt, next_cnt)
+                    dist = contour_min_distance(cur_cnt, next_cnt)
                     if dist < distance_threshold:
                         close_children.append(next_part)
                 if len(close_children) > 1:
@@ -1132,8 +1109,6 @@ class Cell_Analyzer:
 
         return linked_df
     
-    def _contour_min_distance(self, cnt1, cnt2):
-        return contour_min_distance(cnt1, cnt2)
     def _get_contour_for_particle(self, cell_id, frame, particle):
         """
         Retrieve stored contour points for a given cell/frame/particle.
@@ -1190,7 +1165,7 @@ class Cell_Analyzer:
                         continue
     
                     # Check if these two are close enough to consider for merging
-                    dist = self._contour_min_distance(np.array(cnt1), np.array(cnt2))
+                    dist = contour_min_distance(np.array(cnt1), np.array(cnt2))
                     if dist < proximity_threshold:
                         # Now check if only one object exists nearby in next frame
                         possible_merge_target = []
@@ -1200,8 +1175,8 @@ class Cell_Analyzer:
                             if cnt_next is None or len(cnt_next) < 3:
                                 continue
     
-                            d1 = self._contour_min_distance(np.array(cnt1), np.array(cnt_next))
-                            d2 = self._contour_min_distance(np.array(cnt2), np.array(cnt_next))
+                            d1 = contour_min_distance(np.array(cnt1), np.array(cnt_next))
+                            d2 = contour_min_distance(np.array(cnt2), np.array(cnt_next))
     
                             if d1 < proximity_threshold and d2 < proximity_threshold:
                                 possible_merge_target.append(p_next)

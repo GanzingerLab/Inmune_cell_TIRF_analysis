@@ -13,7 +13,7 @@ from tqdm import tqdm
 from .cells import Cell_Analyzer
 from .tracked import Single_tracked_folder
 
-from .image_processing import compute_mean_intensity
+from .image_processing import compute_mean_intensity, create_mask
 
 class Combined_analysis:
     """
@@ -234,10 +234,10 @@ class Combined_analysis:
             
                 for cell_id, group in spots_filtered.groupby('cell_id'):
                     img_stack = self.clusters.sep_cells[cell_id][wl]
-                    # mask = self.clusters._create_mask(img_stack[0].shape, self.clusters._contours[cell_id])
+                    # mask = create_mask(img_stack[0].shape, self.clusters._contours[cell_id])
                     median_int_out = np.median([
                                 np.median(
-                                    img[~self.clusters._create_mask(
+                                    img[~create_mask(
                                         img.shape,
                                         self.clusters._get_contour(cell_id, frame_num)
                                     )]
@@ -250,7 +250,7 @@ class Combined_analysis:
                         x = spot["x_per_cell"]
                         y = spot["y_per_cell"]
                         img = img_stack[t]
-                        mean_intensity = self._compute_mean_intensity(img, x, y, window=1)
+                        mean_intensity = compute_mean_intensity(img, x, y, window=1)
                         mean_intensities.append(mean_intensity)
                         norm_mean_intensities.append(mean_intensity / median_int_out)
             
@@ -749,5 +749,3 @@ class Combined_analysis:
 
         filtered_spots = spots_df[keep_mask].reset_index(drop=True)
         return filtered_spots
-    def _compute_mean_intensity(self, image, x, y, window=1):
-        return compute_mean_intensity(image, x, y, window)
