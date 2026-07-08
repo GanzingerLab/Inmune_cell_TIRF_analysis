@@ -4,10 +4,12 @@ import pandas as pd
 import re
 import yaml
 
+
 from glob import glob
 from spit import tools
 from tqdm import tqdm
 
+from .io_utils import get_nm2px, get_time_interval, openyaml
 from .combined import Combined_analysis
 from .tracked import Single_tracked_folder
 from .plotting import BoxPlotter, HistogramPlotter
@@ -625,27 +627,10 @@ class Dataset_combined_analysis:
                 print(f"- {folder}: {error}")
         else:
             print("All folders processed successfully.")
-    def _get_px2nm(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
-        resultPath  = glob(self.folder + '/**/**result.txt', recursive=True)[0]
-        result_txt  = tools.read_result_file(resultPath) #this opens the results.txt file to check the microscope used. 
-                #It should be in a folder called paramfile inside the folder where the script is located. 
-        if result_txt['Computer'] == 'ANNAPURNA': 
-            return 90.16
-        elif result_txt['Computer'] == 'K2-BIVOUAC':
-            return 108
+    def _get_nm2px(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
+        return get_nm2px(self.folder)
     def _get_frame_rate(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
-        resultPath  = glob(self.folder + '/**/**result.txt', recursive=True)[0]
-        result_txt  = tools.read_result_file(resultPath) #this opens the results.txt file to check the microscope used. 
-                #It should be in a folder called paramfile inside the folder where the script is located. 
-        time_unit = result_txt['Interval']
-        time = time_unit.split(' ')[0]
-        unit = time_unit.split(' ')[1]
-        if unit == 'sec':
-            return float(time)
-        elif unit == 'ms':
-            return int(time)/1000
-        elif unit == 'min':
-            return int(time)*1000
+        return get_time_interval(self.folder)
            
     def _count_run_folders_recursive(self, root_folder):
         pattern = re.compile(r'^Run\d+$')
@@ -657,13 +642,7 @@ class Dataset_combined_analysis:
                     count += 1
         return count
     def _openyaml(self, name):
-        # Load YAML content if found
-        with open(name[0], 'r') as file:
-            data_parts = list(yaml.safe_load_all(file))
-        yaml_data = {}
-        for part in data_parts:
-            yaml_data.update(part)
-        return yaml_data
+        return openyaml(name)
     def validate(self):
         print("Just a reminder that most of the time the whole dataset should be analyzed using the same parameters.")
         print("Here are the parameters for the first folder in the dataset that has colocalized tracks:")
@@ -819,27 +798,10 @@ class Dataset_tracked_folder:
         yaml = self._openyaml(glob(self.folder + r'/**/*_colocsTracks.yaml', recursive=True))
         for i, j in enumerate(yaml.items()):
             print(f"{j[0]}: {j[1]}")
-    def _get_px2nm(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
-        resultPath  = glob(self.folder + '/**/**result.txt', recursive=True)[0]
-        result_txt  = tools.read_result_file(resultPath) #this opens the results.txt file to check the microscope used. 
-                #It should be in a folder called paramfile inside the folder where the script is located. 
-        if result_txt['Computer'] == 'ANNAPURNA': 
-            return 90.16
-        elif result_txt['Computer'] == 'K2-BIVOUAC':
-            return 108
+    def _get_nm2px(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
+        return get_nm2px(self.folder)
     def _get_frame_rate(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
-        resultPath  = glob(self.folder + '/**/**result.txt', recursive=True)[0]
-        result_txt  = tools.read_result_file(resultPath) #this opens the results.txt file to check the microscope used. 
-                #It should be in a folder called paramfile inside the folder where the script is located. 
-        time_unit = result_txt['Interval']
-        time = time_unit.split(' ')[0]
-        unit = time_unit.split(' ')[1]
-        if unit == 'sec':
-            return float(time)
-        elif unit == 'ms':
-            return int(time)/1000
-        elif unit == 'min':
-            return int(time)*1000
+        return get_time_interval(self.folder)
            
     def _count_run_folders_recursive(self, root_folder):
         pattern = re.compile(r'^Run\d+$')
@@ -851,10 +813,4 @@ class Dataset_tracked_folder:
                     count += 1
         return count
     def _openyaml(self, name):
-        # Load YAML content if found
-        with open(name[0], 'r') as file:
-            data_parts = list(yaml.safe_load_all(file))
-        yaml_data = {}
-        for part in data_parts:
-            yaml_data.update(part)
-        return yaml_data
+       return openyaml(name)

@@ -2,7 +2,7 @@ import os
 import yaml
 import numpy as np
 import pandas as pd
-
+from .io_utils import get_nm2px
 from glob import glob
 from picasso.io import TiffMultiMap, load_movie
 from spit import tools
@@ -229,8 +229,7 @@ class Tracked_image:
         plotter.set_grid()
         plotter.set_ylim(0)
         plotter.show_plot(legend_loc= legend_loc)
-        return plotter
-    
+        return plotter   
     def extract_Ds(self, min_len=10, channel='ch0'):
         """
         Extract diffusion coefficients (D_msd) for tracks longer than a minimum length.
@@ -372,7 +371,7 @@ class Single_tracked_folder:
                                    stats1,
                                    coloc_tracks,
                                    coloc_stats, 
-                                   self._get_px2nm(),   
+                                   self._get_nm2px(),   
                                    self.folder
                                    )
             return image1
@@ -399,7 +398,7 @@ class Single_tracked_folder:
                                    ch1, 
                                    tracks1, 
                                    stats1, 
-                                   nm2px = self._get_px2nm(), 
+                                   nm2px = self._get_nm2px(), 
                                    folder = self.folder
                                    )
             return image1
@@ -411,7 +410,7 @@ class Single_tracked_folder:
                                    ch0,
                                    tracks0, 
                                    stats0,
-                                   nm2px = self._get_px2nm(), 
+                                   nm2px = self._get_nm2px(), 
                                    folder = self.folder
                                    )
             return image1
@@ -458,11 +457,5 @@ class Single_tracked_folder:
             return data
         else:
             return False
-    def _get_px2nm(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
-        resultPath  = glob(self.folder + '/**/**result.txt', recursive=True)[0]
-        result_txt  = tools.read_result_file(resultPath) #this opens the results.txt file to check the microscope used. 
-                #It should be in a folder called paramfile inside the folder where the script is located. 
-        if result_txt['Computer'] == 'ANNAPURNA': 
-            return 90.16
-        elif result_txt['Computer'] == 'K2-BIVOUAC':
-            return 108
+    def _get_nm2px(self): #if self.transform = True, this will get the correct naclib coefficients (Annapurna VS K2)
+        return get_nm2px(self.folder)

@@ -1,3 +1,4 @@
+from .io_utils import get_nm2px, get_time_interval
 import cv2
 import json
 import matplotlib.gridspec as gridspec
@@ -26,6 +27,7 @@ from skimage.morphology import (
     remove_small_holes,
     remove_small_objects,
 )
+
 from spit import tools
 from tqdm import tqdm
 import trackpy as tp
@@ -160,58 +162,10 @@ class Cell_Analyzer:
                     self.maturation[ch] = pd.DataFrame(json.load(f))
 
     def _get_nm2px(self):
-        """
-        Get nanometers-per-pixel scaling factor from result.txt.
-
-        Returns
-        -------
-        float
-            Nanometers per pixel.
-
-        Raises
-        ------
-        ValueError
-            If the microscope source is unknown.
-        """
-        resultPath  = glob(self.folder + '/**/*result.txt', recursive=True)[0]
-        result_txt  = tools.read_result_file(resultPath)
-        if result_txt['Computer'] == 'ANNAPURNA': 
-            return 90.16
-        elif result_txt['Computer'] == 'K2-BIVOUAC':
-            return 108
-        else:
-            raise ValueError(f"Unknown microscope source: {result_txt['Computer']}")
-    def get_time_interval(self):
-        """
-        Retrieve the time interval (dt) between frames from result.txt.
-
-        Returns
-        -------
-        float
-            Time interval in seconds.
-
-        Raises
-        ------
-        FileNotFoundError
-            If no result.txt file is found in the folder.
-        """
-        # Extract dt (frame interval) from result.txt
-        result_files = glob(os.path.join(self.folder, "*result.txt"))
-        if not result_files:
-            raise FileNotFoundError("No result.txt file found in the folder.")
-        with open(result_files[0], 'r') as f:
-            resultLines = f.readlines()
+        return get_nm2px(self.folder)
     
-        if tools.find_string(resultLines, 'Interval'): 
-            interval = tools.find_string(resultLines, 'Interval').split(":")[-1].strip()
-            if interval.split(" ")[-1] == 'sec':
-                dt = 1.0 * float(interval.split(" ")[0])
-            elif interval.split(" ")[-1] == 'ms':
-                dt = 0.001 * float(interval.split(" ")[0])
-        else:
-            dtStr = tools.find_string(resultLines, 'Camera Exposure')[17:-1]
-            dt = 0.001 * float((''.join(c for c in dtStr if (c.isdigit() or c == '.'))))
-        return dt
+    def get_time_interval(self):
+        return get_time_interval(self.folder)
             
     def _get_contour(self, cell_id, frame):
         key = (cell_id, frame)
