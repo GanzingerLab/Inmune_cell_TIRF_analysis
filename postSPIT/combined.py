@@ -13,6 +13,8 @@ from tqdm import tqdm
 from .cells import Cell_Analyzer
 from .tracked import Single_tracked_folder
 
+from .image_processing import compute_mean_intensity
+
 class Combined_analysis:
     """
         Class for combined analysis of tracked spots and clusters in microscopy images.
@@ -748,27 +750,4 @@ class Combined_analysis:
         filtered_spots = spots_df[keep_mask].reset_index(drop=True)
         return filtered_spots
     def _compute_mean_intensity(self, image, x, y, window=1):
-        """
-            Compute mean intensity of a local patch around a spot in an image.
-        
-            Parameters
-            ----------
-            image : np.ndarray
-                2D image array.
-            x : float
-                x-coordinate of the spot (pixels).
-            y : float
-                y-coordinate of the spot (pixels).
-            window : int, optional
-                Half-width of the square patch (total size = 2*window+1), by default 1
-        
-            Returns
-            -------
-            float
-                Mean intensity in the patch. Returns NaN if patch is empty.
-        """
-        xi, yi = int(round(x)), int(round(y))
-        x_min, x_max = max(0, xi - window), min(image.shape[1], xi + window + 1)
-        y_min, y_max = max(0, yi - window), min(image.shape[0], yi + window + 1)
-        patch = image[y_min:y_max, x_min:x_max]
-        return np.mean(patch) if patch.size > 0 else np.nan
+        return compute_mean_intensity(image, x, y, window)

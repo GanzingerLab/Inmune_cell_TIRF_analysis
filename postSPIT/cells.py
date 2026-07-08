@@ -18,14 +18,22 @@ from picasso.io import load_movie
 from scipy.optimize import curve_fit
 from scipy.stats import linregress
 from sklearn.metrics import r2_score
-from skimage.draw import polygon
-from skimage.filters import threshold_li, threshold_otsu
+
 from skimage.measure import label, regionprops
 from skimage.morphology import (
     binary_closing,
     binary_opening,
-    remove_small_holes,
-    remove_small_objects,
+)
+
+from .image_processing import (
+    li_threshold,
+    otsu_threshold,
+    phansalkar_threshold,
+    remove_small_objects_per_frame,
+    remove_small_holes_per_frame,
+    create_mask,
+    paint_square,
+    contour_min_distance,
 )
 
 from spit import tools
@@ -799,156 +807,23 @@ class Cell_Analyzer:
         else:
             # No valid crossing, just pick 5 equally spaced
             return [0, n_frames//4, n_frames//2, 3*n_frames//4, n_frames-1]
+    
     def _li_threshold(self, image, mode = "max"):
-        """
-            Apply Li global threshold to a 2D/3D image stack.
-        
-            Parameters
-            ----------
-            image : np.ndarray
-                Input image stack (frames, height, width) or single frame.
-            mask : np.ndarray
-                Cell mask (not currently applied in global thresholding).
-            mode : str, optional
-                Mode for threshold calculation: 'max', 'full', 'median', 'last', by default "max".
-        
-            Returns
-            -------
-            np.ndarray
-                Binary mask after thresholding and closing.
-    """
-        if mode == 'max':
-            thresh = threshold_li(np.max(image, axis = 0))
-        elif mode == 'full':
-            thresh = threshold_li(np.array(image))
-        elif mode == 'median':
-            thresh = threshold_li(np.median(image, axis = 0))
-        elif mode == 'last':
-            thresh = threshold_li(image[-1])
-        else:
-            print("mode is not valid")
-            return None
-        global_mask = binary_closing((image > thresh)) #& self._create_mask(image[0].shape, mask))
-        return global_mask
-    def _otsu_threshold(self, original, image, mode = "max"): ##TODO: remove original? 
-        """
-            Apply Otsu global threshold to a 2D/3D image stack.
-        
-            Parameters
-            ----------
-            original : np.ndarray
-                Original image stack.
-            image : np.ndarray
-                Image stack to threshold.
-            mask : np.ndarray
-                Cell mask (not currently applied in global thresholding).
-            mode : str, optional
-                Mode for threshold calculation: 'max', 'full', 'median', 'last', by default "max".
-        
-            Returns
-            -------
-            np.ndarray
-                Binary mask after thresholding and closing.
-    """
-        if mode == 'max':
-            thresh = threshold_otsu(np.max(original, axis = 0))
-        elif mode == 'full':
-            thresh = threshold_otsu(np.array(original))
-        elif mode == 'median':
-            thresh = threshold_otsu(np.median(original, axis = 0))
-        elif mode == 'last':
-            thresh = threshold_otsu(original[-1])
-        else:
-            print("mode is not valid")
-            return None
-        global_mask = binary_closing((image > thresh))# & self._create_mask(image[0].shape, mask))
-        return global_mask
+        return li_threshold(image, mode=mode)
+   
+    def _otsu_threshold(self, image, mode = "max"): 
+        return otsu_threshold(image, mode=mode)
+    
     def _phansalkar_threshold(self, image_stack, radius=15, k=0.25, p=2.0, q=10.0):
-        """
-            Apply Phansalkar local thresholding per frame.
-        
-            Parameters
-            ----------
-            image_stack : np.ndarray
-                2D or 3D array of images (frames, height, width).
-            radius : int, optional
-                Local window radius, by default 15.
-            k : float, optional
-                Phansalkar parameter k, by default 0.25.
-            p : float, optional
-                Phansalkar parameter p, by default 2.0.
-            q : float, optional
-                Phansalkar parameter q, by default 10.0.
-        
-            Returns
-            -------
-            np.ndarray
-                Binary thresholded image or stack of same shape.
-    """
-        window_size = (radius * 2) + 1
-
-        def threshold_single(image):
-            image = image / np.max(image) if np.max(image) > 0 else image
-            mean = cv2.blur(image, (window_size, window_size))
-            mean_sq = cv2.blur(image**2, (window_size, window_size))
-            std = np.sqrt(mean_sq - mean**2)
-            threshold = mean * (1 + p * np.exp(-q * mean) + k * ((std / 0.5) - 1))
-            return image > threshold
-
-        if image_stack.ndim == 2:
-            return threshold_single(image_stack)
-        elif image_stack.ndim == 3:
-            # Process each frame independently and stack results
-            binary_stack = np.zeros_like(image_stack, dtype=bool)
-            for i in range(image_stack.shape[0]):
-                binary_stack[i] = threshold_single(image_stack[i])
-            return binary_stack
-        else:
-            raise ValueError("Input must be 2D or 3D numpy array")
+        return phansalkar_threshold(image_stack, radius=radius, k=k, p=p, q=q)
+    
+    
     def _remove_small_objects_per_frame(self, stack, min_size=100, connectivity=1):
-        """
-            Remove small objects from each frame of a binary stack.
-        
-            Parameters
-            ----------
-            stack : np.ndarray
-                Binary image stack (frames, height, width).
-            min_size : int, optional
-                Minimum object size in pixels to keep, by default 100.
-            connectivity : int, optional
-                Connectivity for object removal, by default 1.
-        
-            Returns
-            -------
-            np.ndarray
-                Cleaned binary stack.
-    """
-        cleaned_stack = np.zeros_like(stack, dtype=bool)
-        for i in range(stack.shape[0]):  # assuming frames on axis 0
-            cleaned_stack[i] = remove_small_objects(stack[i], min_size=min_size, connectivity=connectivity)
-        return cleaned_stack
+        return remove_small_objects_per_frame(stack, min_size=min_size, connectivity=connectivity)
+    
     def _remove_small_holes_per_frame(self, stack, min_size=100, connectivity=1):
-        """
-            Fill small holes in each frame of a binary stack.
-        
-            Parameters
-            ----------
-            stack : np.ndarray
-                Binary image stack (frames, height, width).
-            min_size : int, optional
-                Maximum hole size in pixels to fill, by default 100.
-            connectivity : int, optional
-                Connectivity for hole filling, by default 1.
-        
-            Returns
-            -------
-            np.ndarray
-                Binary stack with small holes removed.
-    """
-        cleaned_stack = np.zeros_like(stack, dtype=bool)
-        for i in range(stack.shape[0]):  # assuming frames on axis 0
-            cleaned_stack[i] = remove_small_holes(stack[i], area_threshold=min_size, connectivity=connectivity)
-        return cleaned_stack
+        return remove_small_holes_per_frame(stack, min_size=min_size, connectivity=connectivity)
+    
     def _summarize_clusters_per_cell_frame(self, result_df):
         """
             Summarize cluster measurements per cell and per frame by averaging and 
@@ -1000,6 +875,7 @@ class Cell_Analyzer:
             summary_rows.append(summary)
 
         return pd.DataFrame(summary_rows) 
+    
     def _weighted_mean(self, x, weights):
         """
             Compute a weighted mean if there is any valid value, if not it returns NaN.
@@ -1017,6 +893,7 @@ class Cell_Analyzer:
                 Weighted mean, or NaN if weights sum to 0.
             """
         return np.average(x, weights=weights) if len(x) > 0 and np.sum(weights) > 0 else np.nan
+    
     def _safe_std(self, x):
         """
             Compute standard deviation if there is any valid value, if not it returns 0.
@@ -1032,6 +909,7 @@ class Cell_Analyzer:
                 Standard deviation or 0 if insufficient data.
     """
         return x.std() if len(x) > 1 else 0
+    
     def _save_centroid_videos_per_cell(self, clusters_binary, all_props, sep_cells, ch='ch0', square_size=3, output_dir='cluster_analysis', filtered_spots=None):
         
         """
@@ -1117,51 +995,13 @@ class Cell_Analyzer:
             tifffile.imwrite(orig_path, np.array(orig_stack), photometric='rgb')
             tifffile.imwrite(bin_path, np.array(bin_stack), photometric='rgb')
             # print(f"Saved Cell {cell_id} to:\n- {orig_path}\n- {bin_path}")
+    
     def _paint_red_square(self, image, center, size=1, color=None):
-        """
-    Paint a square on an RGB image at a specified center.
-
-    Parameters
-    ----------
-    image : np.ndarray
-        RGB image.
-    center : tuple
-        (row, col) coordinates of the square center.
-    size : int, optional
-        Size of the square (pixels), by default 1.
-    color : list, optional
-        RGB color values, by default red [255,0,0].
-    """
-        if color is None:
-            color = [255, 0, 0]  # red
-
-        r, c = center
-        half = size // 2
-        r_start = max(r - half, 0)
-        r_end = min(r + half + 1, image.shape[0])
-        c_start = max(c - half, 0)
-        c_end = min(c + half + 1, image.shape[1])
-        image[r_start:r_end, c_start:c_end] = color        
+        return paint_square(image, center, size=size, color=color)        
+    
     def _create_mask(self, image_shape, contour):
-        """
-            Create a binary mask from a polygon contour.
-        
-            Parameters
-            ----------
-            image_shape : tuple
-                Shape of the output mask (height, width).
-            contour : np.ndarray
-                Nx2 array of polygon coordinates.
-        
-            Returns
-            -------
-            np.ndarray
-                Boolean mask of the polygon.
-    """
-        mask = np.zeros(image_shape, dtype=bool)
-        rr, cc = polygon(contour[:, 1], contour[:, 0], image_shape)
-        mask[rr, cc] = True
-        return mask
+        return create_mask(image_shape, contour)
+    
     def _summarize_per_track(self, linked_df, min_frames=5):
         features = []
         
@@ -1235,6 +1075,7 @@ class Cell_Analyzer:
             })
         
         return pd.DataFrame(features)
+    
     def _detect_splits_and_merges(self, linked_df, distance_threshold=20, frame_gap=1):
         linked_df = linked_df.copy()
         linked_df['split_event'] = False
@@ -1290,14 +1131,9 @@ class Cell_Analyzer:
                     ] = True
 
         return linked_df
+    
     def _contour_min_distance(self, cnt1, cnt2):
-        """
-        Compute the minimum Euclidean distance between two contours (Nx2 numpy arrays).
-        """
-        # cnt1 and cnt2 are arrays of shape (N_points, 2)
-        # Compute all pairwise distances and find the minimum
-        dists = np.sqrt(np.sum((cnt1[:, None, :] - cnt2[None, :, :])**2, axis=2))
-        return np.min(dists)
+        return contour_min_distance(cnt1, cnt2)
     def _get_contour_for_particle(self, cell_id, frame, particle):
         """
         Retrieve stored contour points for a given cell/frame/particle.
