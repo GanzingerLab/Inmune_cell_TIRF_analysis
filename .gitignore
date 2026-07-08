@@ -1,5 +1,32 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Test/cache files
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Packaging/build artifacts
+*.egg-info/
+build/
+dist/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+env/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Old scratch files
 postSPIT/test_classes.py
 postSPIT/test_cluster_analysis.py
 postSPIT/untitled1.py
-postSPIT/__pycache__/plotting_classes.cpython-310.pyc
-*.pyc
