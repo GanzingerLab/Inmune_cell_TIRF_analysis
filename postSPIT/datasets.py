@@ -2,11 +2,8 @@ import json
 import os
 import pandas as pd
 import re
-import yaml
-
 
 from glob import glob
-from spit import tools
 from tqdm import tqdm
 
 from .io_utils import get_time_interval, openyaml
@@ -757,10 +754,10 @@ class Dataset_tracked_folder:
         final_ds = pd.concat(all_ds, ignore_index=True)
         # box.add_statistical_annotations()
         return final_ds, box
-    def get_dwell(self, min_len = 10, ref = 'ch0', x0=0, xt=None, y0=0, yt=None):
+    def get_dwell(self, min_len=10, ref='ch0', x0=0, xt=None, y0=0, yt=None):
         all_dwell = []
         frame_rate = get_time_interval(self.folder)
-        hist = HistogramPlotter( xlabel="dwell_time(sec)", ylabel="Frequency")
+        hist = HistogramPlotter(xlabel="dwell_time(sec)", ylabel="Frequency")
         for i, cond in tqdm(zip(self._conditions_paths, self.conditions_to_use), desc='Extracting Ds...\n'):
             print(f'\nAnalyzing {i}...')
             dwell_cond = []
@@ -770,21 +767,25 @@ class Dataset_tracked_folder:
                 pathsyaml = glob(j + '/**/**colocsTracks.yaml', recursive=True)
                 yaml = openyaml(pathsyaml)
                 image = Single_tracked_folder(j).open_files()
-                dwell = image.extract_dwell(frame_rate = frame_rate, min_len = min_len, max_dist = yaml['th'], ref = ref)
+                dwell = image.extract_dwell(frame_rate=frame_rate, min_len=min_len, max_dist=yaml['th'], ref=ref)
                 if isinstance(dwell, pd.DataFrame):
-                # # Add columns at the beginning
                     dwell.insert(0, 'condition', cond)
                     dwell.insert(0, 'run', j)
-                    all_dwell.append(dwell)  # Accumulate
+                    all_dwell.append(dwell)
                     dwell_cond.append(dwell)
-            final_cond = pd.concat(dwell_cond, ignore_index=True)
-            hist.add_data(final_cond.dwell_time, label = f"{cond}")
-        final_dwell = pd.concat(all_dwell, ignore_index=True)
+            dwell_cond = [df for df in dwell_cond if df is not None and not df.empty and not df.isna().all().all()]
+            if dwell_cond:
+                final_cond = pd.concat(dwell_cond, ignore_index=True)
+                hist.add_data(final_cond.dwell_time, label=f"{cond}")
+        all_dwell = [df for df in all_dwell if df is not None and not df.empty and not df.isna().all().all()]
+        if all_dwell:
+            final_dwell = pd.concat(all_dwell, ignore_index=True)
+        else:
+            final_dwell = pd.DataFrame(columns=['run', 'condition', 'colocID', 'track.id_ref', 'track.id_binds', 'cell_id', 'dwell_time'])
         hist.set_labels()
         hist.set_xlim(x0, xt)
         hist.set_ylim(y0, yt)
         hist.show_plot()
-        # box.add_statistical_annotations()
         return final_dwell, hist
     def validate(self):
         print("Just a reminder that most of the time the whole dataset should be analyzed using the same parameters.")

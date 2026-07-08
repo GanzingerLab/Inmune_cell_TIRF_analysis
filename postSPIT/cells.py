@@ -1,4 +1,4 @@
-from .io_utils import get_nm2px, get_time_interval
+from .io_utils import get_nm2px
 import cv2
 import json
 import matplotlib.gridspec as gridspec

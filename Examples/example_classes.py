@@ -50,7 +50,7 @@ image1.plot_colocs([248]) #in here we plot the coloc track (track in ch0, track 
 #plot = image1.plot_colocs([248])
 #plot.save_plot('path', dpi = 300)
 #%%
-image1.intensity_coloc(470, 'upper left', 'CD19', 'Zap70') #in here we plot the intensities over time of a coloc track. We pass the track ID (not in a list now!)
+image1.plot_intensity_coloc(470, 'upper left', 'CD19', 'Zap70') #in here we plot the intensities over time of a coloc track. We pass the track ID (not in a list now!)
                                                             # then as optional we can pass the location of the legend, and the labels for ch0 and ch1.
                                                             
 # TODO: #I still have to implement intensity plotting for a single channel (for one or multiple tracks)

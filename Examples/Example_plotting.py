@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Fri Aug 22 09:54:03 2025
-
-@author: castrolinares
-"""
-
 from postSPIT import tirf_analysis as plc
 import matplotlib.pyplot as plt
 
