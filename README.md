@@ -12,7 +12,7 @@ Install the package in editable mode from the repository root:
 pip install -e .
 ```
 
-## Basic usage
+## Usage examples
 
 Import the main analysis classes directly from `postSPIT`:
 
