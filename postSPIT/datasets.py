@@ -525,7 +525,6 @@ class Dataset_combined_analysis:
             print(
                 f"Warning: could not determine the frame rate automatically. {frame_rate} used\n"
                 f"Folder: {self.folder}\n"
-                f"Using the supplied frame rate: {frame_rate}\n"
                 f"Error: {type(exc).__name__}: {exc}"
             )
         hist = HistogramPlotter(xlabel="dwell_time(sec)", ylabel="Frequency")
