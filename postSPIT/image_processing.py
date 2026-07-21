@@ -74,7 +74,6 @@ def otsu_threshold(image, mode="max"):
     elif mode == "last":
         thresh = threshold_otsu(image[-1])
     
-
     return binary_closing(image > thresh)
 
 
