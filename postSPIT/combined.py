@@ -10,7 +10,7 @@ from spit import linking as link
 from spit import tools
 from tqdm import tqdm
 
-from .io_utils import openyaml
+from .io_utils import openyaml, validate_choice
 from .cells import Cell_Analyzer
 from .tracked import Single_tracked_folder
 
@@ -190,6 +190,11 @@ class Combined_analysis:
             spots_filtered : pd.DataFrame
                 Spots filtered outside clusters.
         """
+
+        validate_choice(ch, {'ch0', 'ch1'}, 'ch')
+        validate_choice(th_method, {'li', 'li_local', 'otsu', 'otsu_local'}, 'th_method')
+        validate_choice(global_th_mode, {'max', 'full', 'median', 'last'}, 'global_th_mode')
+
         if ch == 'ch0':
             wl = self.clusters.ch0_wl
         elif ch == 'ch1':
@@ -341,6 +346,7 @@ class Combined_analysis:
             ValueError
                 If the channel is invalid.
     """
+        validate_choice(ch, {'ch0', 'ch1'}, 'ch')
         if self.tracked is None:
             raise RuntimeError("Tracked files are missing or tracking failed for this folder. Cannot proceed.")
         if ch == 'ch0':
@@ -617,6 +623,8 @@ class Combined_analysis:
         RuntimeError
             If `retrack()` has not been run or maturation data is missing.
         """
+        validate_choice(ch, {'ch0', 'ch1'}, 'ch')
+        validate_choice(mature_class, {0, 1, 2, 3}, 'mature_class')
         if not any(v is not None for v in self.tracks_outside_clusters.values()):
             raise RuntimeError(
                 "You must run retrack() before extract_Ds_filtered()."
@@ -675,6 +683,9 @@ class Combined_analysis:
             RuntimeError
                 If `recoloc_tracks()` has not been run or maturation data is missing.
         """
+        validate_choice(ref, {'ch0', 'ch1'}, 'ref')
+        validate_choice(ch_maturation_selection, {'ch0', 'ch1'}, 'ch_maturation_selection')
+        validate_choice(mature_class, {0, 1, 2, 3}, 'mature_class')
         if self.cotracks_outside_clusters is None or self.cotracks_outside_clusters_stats is None:
             raise RuntimeError("You must run recoloc_tracks() before extract_dwell_filtered().")
         if not any(v is not None for v in self.clusters.maturation.values()):

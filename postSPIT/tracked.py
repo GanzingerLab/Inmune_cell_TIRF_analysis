@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
-from .io_utils import get_nm2px, openyaml
+from .io_utils import get_nm2px, openyaml, validate_choice
 from glob import glob
 from picasso.io import TiffMultiMap, load_movie
 
@@ -112,6 +112,7 @@ class Tracked_image:
         TrackPlotter
             A TrackPlotter object with the plotted tracks.
         """
+        validate_choice(channel, {'ch0', 'ch1'}, 'channel')
         if channel == 'ch0':
             image = self.ch0
             tracks = self.tracks0
@@ -244,16 +245,12 @@ class Tracked_image:
         pandas.DataFrame
             DataFrame with columns ['track.id', 'cell_id', 'D_msd'] for qualifying tracks.
         """
+        validate_choice(channel, {'ch0', 'ch1'}, 'channel')
+
         if channel == 'ch0':
             stats = self.stats0
-        elif channel == 'ch1':
-            if self.stats1 is None:
-                # Return empty DataFrame with expected columns
-                return None
-            else:
-                stats = self.stats1
         else:
-            raise ValueError("channel must be 'ch0' or 'ch1'")
+            stats = self.stats1
     
         columns_to_extract = ['track.id', 'cell_id', 'D_msd']
         ds = stats[stats['length'] >= min_len][columns_to_extract]
@@ -280,6 +277,7 @@ class Tracked_image:
            DataFrame containing columns ['colocID', 'track.id_ref', 'track.id_binds', 'cell_id', 'dwell_time'] 
            for qualifying colocalizations, or None if no valid data is available.
        """
+        validate_choice(ref, {'ch0', 'ch1'}, 'ref')
         stats = self.coloc_stats
         tracks = self.coloc_tracks
         if all(isinstance(obj, pd.DataFrame) for obj in [stats, tracks]):

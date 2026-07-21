@@ -1,4 +1,4 @@
-from .io_utils import get_nm2px
+from .io_utils import get_nm2px, validate_choice
 import cv2
 import json
 import matplotlib.gridspec as gridspec
@@ -295,6 +295,8 @@ class Cell_Analyzer:
         linked_stats : pd.DataFrame
             Summary statistics per track.
         """
+        validate_choice(th_method, {'li', 'li_local', 'otsu', 'otsu_local'}, 'th_method')
+        validate_choice(global_th_mode, {'max', 'full', 'median', 'last'}, 'global_th_mode')
         clusters_binary = {}
         all_props = []
         self.cluster_contours = {}  # Store contours by cell/frame/label

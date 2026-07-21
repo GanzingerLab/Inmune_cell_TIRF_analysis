@@ -6,7 +6,7 @@ import re
 from glob import glob
 from tqdm import tqdm
 
-from .io_utils import get_time_interval, openyaml
+from .io_utils import get_time_interval, openyaml, validate_choice
 from .combined import Combined_analysis
 from .tracked import Single_tracked_folder
 from .plotting import BoxPlotter, HistogramPlotter
@@ -92,6 +92,9 @@ class Dataset_combined_analysis:
         """
         Run Cell_analyzer.clusters.analyze_clusters_protein on all runs in this dataset.
         """
+        validate_choice(ch, {'ch0', 'ch1'}, 'ch')
+        validate_choice(th_method,{'li', 'li_local', 'otsu', 'otsu_local'},'th_method')
+        validate_choice(global_th_mode, {'max', 'full', 'median', 'last'}, 'global_th_mode')
         for run_path in self.run_paths:
             try:
                 if verbose:
@@ -144,7 +147,9 @@ class Dataset_combined_analysis:
         Run Combined_analysis.combine_spots_clusters on all runs in this dataset.
         Saves outputs in each run folder automatically.
         """
-
+        validate_choice(ch, {'ch0', 'ch1'}, 'ch')
+        validate_choice(th_method,{'li', 'li_local', 'otsu', 'otsu_local'},'th_method')
+        validate_choice(global_th_mode, {'max', 'full', 'median', 'last'}, 'global_th_mode')
         for run_path in self.run_paths:
             try:
                 print(f'Analyzing: {run_path}')
@@ -271,6 +276,9 @@ class Dataset_combined_analysis:
             - ``ch1_tracks``: int — number of tracks in channel 1  
             - ``min_len_track``: int — minimum track length used for filtering
     """
+        validate_choice(source, {'tracked', 'filtered'}, 'source')
+        validate_choice(ch_maturation_selection, {'ch0', 'ch1'}, 'ch_maturation_selection')
+        validate_choice(mature_class, {0, 1, 2, 3}, 'mature_class')
         results = []
         for cond_path, cond_name in zip(self._conditions_paths, self.conditions_to_use):
             run_folders = []
@@ -411,6 +419,8 @@ class Dataset_combined_analysis:
         mature_class : int
             Which maturation category to use (only relevant if source="filtered_mature").
         """
+        validate_choice(ch, {'ch0', 'ch1'}, 'ch')
+        validate_choice(source, {'tracked', 'filtered'}, 'source')
         all_ds = []
         box = BoxPlotter(xlabel="Conditions", ylabel="Diff. Coeff. (um^2/sec)")
         
@@ -518,6 +528,10 @@ class Dataset_combined_analysis:
         - ``hist`` : HistogramPlotter  
           A histogram object visualizing dwell time distributions per condition.
         """
+        validate_choice(ref, {'ch0', 'ch1'}, 'ch')
+        validate_choice(source, {'tracked', 'filtered'}, 'source')
+        validate_choice(ch_maturation_selection, {'ch0', 'ch1'}, 'ch_maturation_selection')
+
         all_dwell = []
         try:
             frame_rate = get_time_interval(self.folder)
@@ -759,6 +773,7 @@ class Dataset_tracked_folder:
         else: 
             print("run count_number_cotracks first")
     def get_Ds(self, min_len = 10, channel = 'ch0'):
+        validate_choice(channel, {'ch0', 'ch1'}, 'channel')
         all_ds = []  # List to collect all DataFrames
         box = BoxPlotter(xlabel="Conditions", ylabel="Diff. Coeff. (um^2/sec)")
         for i, cond in tqdm(zip(self._conditions_paths, self.conditions_to_use), desc='Extracting Ds...\n'):
@@ -782,6 +797,7 @@ class Dataset_tracked_folder:
         # box.add_statistical_annotations()
         return final_ds, box
     def get_dwell(self, min_len=10, ref='ch0', x0=0, xt=None, y0=0, yt=None):
+        validate_choice(ref, {'ch0', 'ch1'}, 'ref')
         all_dwell = []
         frame_rate = get_time_interval(self.folder)
         hist = HistogramPlotter(xlabel="dwell_time(sec)", ylabel="Frequency")

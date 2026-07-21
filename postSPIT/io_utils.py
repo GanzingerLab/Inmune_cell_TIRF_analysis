@@ -89,3 +89,10 @@ def openyaml(name):
             data.update(part)
 
     return data
+
+def validate_choice(value, valid_values, name):
+    if value not in valid_values:
+        raise ValueError(
+            f"{name} must be one of {sorted(valid_values)}, "
+            f"not {value!r}."
+        )

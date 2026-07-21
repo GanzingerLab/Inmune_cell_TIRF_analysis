@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from .io_utils import validate_choice
 
 from skimage.draw import polygon
 from skimage.filters import threshold_li, threshold_otsu
@@ -30,6 +31,7 @@ def li_threshold(image, mode="max"):
     np.ndarray or None
         Binary mask after thresholding and closing. Returns None if mode is invalid.
     """
+    validate_choice(mode, {'max', 'full', 'median', 'last'}, 'mode')
     if mode == "max":
         thresh = threshold_li(np.max(image, axis=0))
     elif mode == "full":
@@ -38,9 +40,6 @@ def li_threshold(image, mode="max"):
         thresh = threshold_li(np.median(image, axis=0))
     elif mode == "last":
         thresh = threshold_li(image[-1])
-    else:
-        print("mode is not valid")
-        return None
 
     return binary_closing(image > thresh)
 
@@ -65,6 +64,7 @@ def otsu_threshold(image, mode="max"):
     np.ndarray or None
         Binary mask after thresholding and closing. Returns None if mode is invalid.
     """
+    validate_choice(mode, {'max', 'full', 'median', 'last'}, 'mode')
     if mode == "max":
         thresh = threshold_otsu(np.max(image, axis=0))
     elif mode == "full":
@@ -73,9 +73,7 @@ def otsu_threshold(image, mode="max"):
         thresh = threshold_otsu(np.median(image, axis=0))
     elif mode == "last":
         thresh = threshold_otsu(image[-1])
-    else:
-        print("mode is not valid")
-        return None
+    
 
     return binary_closing(image > thresh)
 
