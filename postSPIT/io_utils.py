@@ -19,7 +19,6 @@ def get_nm2px(folder):
     if not result_files:
         raise FileNotFoundError("No result.txt file found in the folder.")
     result_txt = tools.read_result_file(result_files[0])
-    result_txt  = tools.read_result_file(resultPath)
     if result_txt['Computer'] == 'ANNAPURNA': 
         return 90.16
     elif result_txt['Computer'] == 'K2-BIVOUAC':

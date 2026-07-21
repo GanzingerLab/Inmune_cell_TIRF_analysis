@@ -289,10 +289,18 @@ class Dataset_combined_analysis:
                         ch0_stats = a.stats0
                         ch1_stats = a.stats1
                         coloc_stats = a.coloc_stats
-                    except: 
+                    except Exception as exc:
                         ch0_stats = None
                         ch1_stats = None
                         coloc_stats = None
+                        self.failed_folders.append(
+                            (run_folder, f"{type(exc).__name__}: {exc}")
+                        )
+                        print(
+                            f"Warning: could not load tracked statistics.\n"
+                            f"Folder: {run_folder}\n"
+                            f"Error: {type(exc).__name__}: {exc}"
+                        )
                 else:  # use Combined_analysis
                     a = Combined_analysis(run_folder, ch0_hint = self.ch0_hint, ch1_hint = self.ch1_hint, verbose=False)
                     if a.clusters is None:
@@ -422,8 +430,17 @@ class Dataset_combined_analysis:
                     try:
                         image = Single_tracked_folder(run_folder, self.ch0_hint, self.ch1_hint).open_files()
                         ds = image.extract_Ds(min_len, ch)
-                    except: 
+                    except Exception as exc:
                         ds = pd.DataFrame()
+                        self.failed_folders.append(
+                            (run_folder, f"{type(exc).__name__}: {exc}")
+                        )
+                        print(
+                            f"Warning: diffusion extraction failed.\n"
+                            f"Channel: {ch}\n"
+                            f"Folder: {run_folder}\n"
+                            f"Error: {type(exc).__name__}: {exc}"
+                        )
                     
                 else:  # use Combined_analysis
                     analysis = Combined_analysis(run_folder, verbose=False)
@@ -504,8 +521,13 @@ class Dataset_combined_analysis:
         all_dwell = []
         try:
             frame_rate = get_time_interval(self.folder)
-        except: 
-            frame_rate = frame_rate
+        except Exception as exc:
+            print(
+                f"Warning: could not determine the frame rate automatically. {frame_rate} used\n"
+                f"Folder: {self.folder}\n"
+                f"Using the supplied frame rate: {frame_rate}\n"
+                f"Error: {type(exc).__name__}: {exc}"
+            )
         hist = HistogramPlotter(xlabel="dwell_time(sec)", ylabel="Frequency")
 
         for cond_path, cond_name in zip(self._conditions_paths, self.conditions_to_use):
@@ -547,9 +569,15 @@ class Dataset_combined_analysis:
                             dwell.insert(0, 'run', run_folder)
                             all_dwell.append(dwell)
                             dwell_cond.append(dwell)
-                except Exception as e:
-                    self.failed_folders.append((run_folder, str(e)))
-                    print(f"Skipping folder {run_folder} due to error: {e}")
+                except Exception as exc:
+                    self.failed_folders.append(
+                        (run_folder, f"{type(exc).__name__}: {exc}")
+                    )
+                    print(
+                        f"Warning: dwell-time extraction failed.\n"
+                        f"Folder: {run_folder}\n"
+                        f"Error: {type(exc).__name__}: {exc}"
+                    )
                     continue
 
             if dwell_cond:

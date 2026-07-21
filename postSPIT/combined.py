@@ -227,8 +227,15 @@ class Combined_analysis:
             elif step == "Remove spots within clusters":
                 try:
                     spots_filtered = self.remove_spots_within_clusters(ch)
-                except:
+                except Exception as exc:
                     spots_filtered = pd.DataFrame(columns=['cell_id', 't', 'x_per_cell', 'y_per_cell'])
+                    print(
+                        f"Warning: could not remove spots within clusters.\n"
+                        f"Channel: {ch}\n"
+                        f"Folder: {self.folder}\n"
+                        f"Error: {type(exc).__name__}: {exc}"
+                    )
+                    
     
             elif step == "Compute mean intensity":
                 mean_intensities = []
@@ -295,8 +302,13 @@ class Combined_analysis:
                             clusters_binary, clusters_frame, self.clusters.sep_cells, ch=ch,
                             square_size=2, filtered_spots=spots_filtered, output_dir="cluster_analysis_spots_filtered"
                         )
-                    except:
-                        pass
+                    except Exception as exc:
+                        print(
+                            f"Warning: could not save centroid videos.\n"
+                            f"Channel: {ch}\n"
+                            f"Folder: {self.folder}\n"
+                            f"Error: {type(exc).__name__}: {exc}"
+                        )
         if self.folder is not None:
             output_dir = os.path.join(self.folder, 'cluster_analysis_spots_filtered')
         if not os.path.exists(output_dir):
@@ -498,9 +510,20 @@ class Combined_analysis:
                 self.tracks_outside_clusters_stats[ch] = df_stats
         
                 print(f"Finished retracking {ch} ({len(df_tracksTP)} tracks).")
-        except:
-            self.tracks_outside_clusters[ch] = None
-            self.tracks_outside_clusters_stats[ch] = None
+        except Exception as exc:
+            if 'ch' in locals():
+                self.tracks_outside_clusters[ch] = None
+                self.tracks_outside_clusters_stats[ch] = None
+                channel_message = ch
+            else:
+                channel_message = "unknown"
+
+            print(
+                f"Warning: retracking failed.\n"
+                f"Channel: {channel_message}\n"
+                f"Folder: {self.folder}\n"
+                f"Error: {type(exc).__name__}: {exc}"
+            )
     def recoloc_tracks(self, overwrite = False):
             """
             Perform co-localization analysis on re-tracked spots outside clusters using the same method and settings as SPIT.
@@ -563,9 +586,14 @@ class Combined_analysis:
                 coloc_stats.to_hdf(os.path.join(output_dir, f"{self.clusters.ch0_wl}_roi_locs_nm_trackpy_ColocsTracks_stats.hdf"), key = 'df')
                 self.cotracks_outside_clusters = df_colocs
                 self.cotracks_outside_clusters_stats = coloc_stats
-            except: 
+            except Exception as exc:
                 self.cotracks_outside_clusters = None
                 self.cotracks_outside_clusters_stats = None
+                print(
+                    f"Warning: recolocalization failed.\n"
+                    f"Folder: {self.folder}\n"
+                    f"Error: {type(exc).__name__}: {exc}"
+                )
     def extract_Ds_filtered(self, mature_class = 1, min_len = 10,  ch = 'ch0'):
         """
         Extract diffusion coefficients (D_msd) for tracks outside clusters filtered by cell maturation.
