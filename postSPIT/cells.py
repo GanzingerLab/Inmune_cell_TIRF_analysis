@@ -41,6 +41,8 @@ from .stats_utils import (
     summarize_per_track,
 )
 
+from .io_utils import load_tiff_stack
+
 from spit import tools
 from tqdm import tqdm
 import trackpy as tp
@@ -99,7 +101,7 @@ class Cell_Analyzer:
             match = re.search(r'(\d{3}nm)', image)
             if match: 
                 wl = match.group(1)   # e.g. '405nm'
-                self.images[wl] = load_movie(image)[0]
+                self.images[wl] = load_tiff_stack(image)
 
         self.channels = list(self.images.keys())
 

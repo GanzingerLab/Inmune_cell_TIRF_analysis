@@ -1,6 +1,19 @@
 from glob import glob
 from spit import tools
 import yaml
+import tifffile
+
+def load_tiff_stack(path):
+    with tifffile.TiffFile(path) as tif:
+        try:
+            return tif.asarray(key=range(len(tif.pages)))
+        except RuntimeError as e:
+            if "incompatible keyframe" not in str(e):
+                raise
+
+            print(f"Warning: Incompatible TIFF page in {path}")
+            return tif.asarray(key=range(len(tif.pages) - 1))
+
 def get_nm2px(folder):
     """
     Get nanometers-per-pixel scaling factor from result.txt.
