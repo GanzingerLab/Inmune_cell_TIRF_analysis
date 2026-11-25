@@ -40,7 +40,8 @@ from .stats_utils import (
     summarize_clusters_per_cell_frame,
     summarize_per_track,
 )
-
+from skimage.filters import difference_of_gaussians, threshold_li
+from skimage.morphology import closing, dilation, disk, remove_small_objects
 from .io_utils import load_tiff_stack
 
 from spit import tools
@@ -427,26 +428,26 @@ class Cell_Analyzer:
         result = pd.DataFrame(all_props)
         if result.empty: 
             results_stats = pd.DataFrame()
-            linked_df = pd.DataFrame()
-            linked_stats = pd.DataFrame()
+            # linked_df = pd.DataFrame()
+            # linked_stats = pd.DataFrame()
         else:
             results_stats = summarize_clusters_per_cell_frame(result)
-            df_tp = result.rename(columns={"centroid_col": "x", "centroid_row": "y", "norm_sum_int": "mass", "area": "size"})
-            df_tp['label'] = result['label']
+            # df_tp = result.rename(columns={"centroid_col": "x", "centroid_row": "y", "norm_sum_int": "mass", "area": "size"})
+            # df_tp['label'] = result['label']
     
-            linked_all = []
-            for cell_id, df_cell in df_tp.groupby('cell_id'):
-                linked = tp.link_df(df_cell, search_range=25, memory=0, adaptive_step=0.95,
-                                    adaptive_stop=2, link_strategy='hybrid')
-                linked['cell_id'] = cell_id
-                linked_all.append(linked)
+            # linked_all = []
+            # for cell_id, df_cell in df_tp.groupby('cell_id'):
+            #     linked = tp.link_df(df_cell, search_range=25, memory=0, adaptive_step=0.95,
+            #                         adaptive_stop=2, link_strategy='hybrid')
+            #     linked['cell_id'] = cell_id
+            #     linked_all.append(linked)
     
-            linked_df = pd.concat(linked_all, ignore_index=True)
-            linked_stats = summarize_per_track(linked_df)
+            # linked_df = pd.concat(linked_all, ignore_index=True)
+            # linked_stats = summarize_per_track(linked_df)
         self.result_cluster_analysis[wl] = result
         self.summary_cluster_analysis[wl] = results_stats
-        self.linked_clusters[wl] = linked_df
-        self.linked_clusters_stats[wl] = linked_stats
+        # self.linked_clusters[wl] = linked_df
+        # self.linked_clusters_stats[wl] = linked_stats
         
         if save_videos:
             self._save_centroid_videos_per_cell(clusters_binary, result, self.sep_cells, ch=ch, square_size=2)
@@ -463,13 +464,111 @@ class Cell_Analyzer:
                 result.to_hdf(os.path.join(output_dir, f'clusters_{wl}.hdf'), key='df')   
         if not results_stats.empty:
             results_stats.to_csv(os.path.join(output_dir, f'clusters_stats_{wl}.csv'), index = False) 
-        if not linked_df.empty:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", PerformanceWarning)
-                linked_df.to_hdf(os.path.join(output_dir, f'clusters_tracks_{wl}.hdf'), key = 'df')   
-        if not linked_stats.empty:
-            linked_stats.to_csv(os.path.join(output_dir, f'clusters_tracks_stats_{wl}.csv'), index = False) 
-        return clusters_binary, result, results_stats, linked_df, linked_stats
+        # if not linked_df.empty:
+        #     with warnings.catch_warnings():
+        #         warnings.simplefilter("ignore", PerformanceWarning)
+        #         linked_df.to_hdf(os.path.join(output_dir, f'clusters_tracks_{wl}.hdf'), key = 'df')   
+        # if not linked_stats.empty:
+        #     linked_stats.to_csv(os.path.join(output_dir, f'clusters_tracks_stats_{wl}.csv'), index = False) 
+        return clusters_binary, result, results_stats#, linked_df, linked_stats
+    def analyze_clusters_dog(self, ch='ch0', small_sigmas=(1, 5), large_sigmas=(1, 30),
+                         small_factor=0.5, large_factor=1.5, expansion=5, min_size=98,
+                         save=True):
+
+        # Select channel
+        if ch == 'ch0':
+            wl = self.ch0_wl
+        elif ch == 'ch1':
+            wl = self.ch1_wl
+        elif ch in self.images:
+            wl = ch
+        else:
+            raise ValueError(f"Invalid channel {ch}. Available: {list(self.images.keys())}")
+
+        def get_dog_mask(img, sigmas, factor):
+            dog = difference_of_gaussians(img, *sigmas)
+            positive = dog[dog > 0]
+
+            if positive.size == 0:
+                return np.zeros(img.shape, dtype=bool)
+
+            mask = dog > threshold_li(positive) * factor
+            mask = closing(mask, disk(1))
+            return remove_small_objects(mask, min_size=15)
+
+        # Load dynamic masks
+        with np.load(os.path.join(self.folder, 'cell_detection', 'rois.npz')) as f:
+            rois = f['rois']
+
+        # Extract crop coordinates from ROI files
+        bboxes = {}
+        for roi in natsorted(glob(os.path.join(self.folder, '*.roi'))):
+            match = re.search(r'roi(\d+)\.roi$', roi)
+            if match is None:
+                continue
+
+            cell_id = int(match.group(1))
+            contour = tools.get_roi_contour(roi)
+
+            x0, x1 = int(min(contour[:, 0])), int(max(contour[:, 0]))
+            y0, y1 = int(min(contour[:, 1])), int(max(contour[:, 1]))
+            bboxes[cell_id] = [x0, x1, y0, y1]
+
+        clusters_binary = {}
+
+        for cell_id in self.sep_cells:
+            to_work = self.sep_cells[cell_id][wl]
+            masks = np.zeros(to_work.shape, dtype=bool)
+
+            x0, x1, y0, y1 = bboxes[cell_id]
+            cell_rois = rois[:, y0:y1, x0:x1] == cell_id
+
+            if cell_rois.shape != to_work.shape:
+                raise ValueError(f'Cell {cell_id}: image {to_work.shape}, mask {cell_rois.shape}')
+
+            for frame in range(len(to_work)):
+                img = to_work[frame].astype(np.float32)
+                cell_mask = cell_rois[frame]
+
+                if not cell_mask.any():
+                    continue
+
+                # Small and large DoG
+                mask_small = get_dog_mask(img, small_sigmas, small_factor)
+                mask_large = get_dog_mask(img, large_sigmas, large_factor)
+
+                # Combine detections and restrict to dynamic cell mask
+                mask_combined = (mask_small | mask_large) & cell_mask
+
+                if not mask_combined.any():
+                    continue
+
+                # Expand detections
+                expanded = dilation(mask_combined, disk(expansion)) & cell_mask
+
+                # Intensity threshold using expanded mask
+                threshold = threshold_li(img[expanded])
+                mask_threshold = (img > threshold) & expanded
+
+                # Preserve original DoG detections
+                mask_final = mask_threshold | mask_combined
+
+                # Remove small clusters
+                masks[frame] = remove_small_objects(mask_final, min_size=min_size)
+
+            clusters_binary[cell_id] = masks
+
+        # Store in object
+        self.clusters_binary_dog = getattr(self, 'clusters_binary_dog', {})
+        self.clusters_binary_dog[wl] = clusters_binary
+
+        # Save
+        if save:
+            output_dir = os.path.join(self.folder, 'cluster_analysis')
+            os.makedirs(output_dir, exist_ok=True)
+            np.save(os.path.join(output_dir, f'clusters_binary_dog_{wl}.npy'), clusters_binary, allow_pickle=True)
+
+        return clusters_binary
     def predict_maturation(self, model, preprocess_frame_func = None, save_plot = False, 
                            N_rolling = 5, ch = 'ch0', r2_thresh = 0.75, low_thresh=0.4, high_thresh=0.6, overwrite = False):
         """
