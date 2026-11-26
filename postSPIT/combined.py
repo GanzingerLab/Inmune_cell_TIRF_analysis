@@ -142,58 +142,61 @@ class Combined_analysis:
             self.cotracks_outside_clusters = pd.read_csv(coloc_csv)
             self.cotracks_outside_clusters_stats = pd.read_hdf(coloc_hdf, key='df')
 
-    def combine_spots_clusters(self, min_size=80, ch='ch0', th_method='li_local',
-                           global_th_mode='max', window_size=15, p=2, q=6, save_videos=False, overwrite = False):
+    def combine_spots_clusters(self, ch='ch0', save_videos=False, overwrite=False):
         """
-        Combine tracked spots with cluster analysis and compute spot statistics, it includes:
-                 - checks if clusters have been found by checking if the results have been reloaded. If they are not, 
-                 runs analysze clusters from Cell_Analyzer 
-                 - From the spots found by SPIT, it removes the ones inside a cluster. 
-                 - Calculate the mean intensities of the spots and saves them together in the file with the filtered spots. 
-                 - calculates the number of spots, their mean intensity and the standard deviation and couples it to the 
-                 clusters stats. 
-    
+        Combine tracked spots with previously detected clusters.
+
+        This function:
+            - Loads existing cluster masks and statistics. Cluster detection must
+            have been performed beforehand.
+            - Removes SPIT-detected spots located inside clusters.
+            - Measures the mean fluorescence intensity of the remaining spots.
+            - Normalizes spot intensities by the median background intensity.
+            - Calculates per-frame spot counts, mean intensities, and standard deviations.
+            - Merges spot statistics with the existing cluster statistics.
+            - Optionally saves videos showing clusters and filtered spots.
+            - Saves the filtered spot data and combined statistics.
+
         Parameters
         ----------
-        min_size : int, optional
-            Minimum size of clusters to consider, by default 80
         ch : str, optional
-            Channel to process ('ch0' or 'ch1'), by default 'ch0'
-        th_method : str, optional
-            Local thresholding method, by default 'li_local'
-        global_th_mode : str, optional
-            Global threshold mode for clusters, by default 'max'
-        window_size : int, optional
-            Window size for local thresholding, by default 15
-        p : int, optional
-            Local threshold parameter, by default 2
-        q : int, optional
-            Local threshold parameter, by default 6
+            Channel to analyze ('ch0' or 'ch1'), by default 'ch0'.
         save_videos : bool, optional
-            Save centroid videos for clusters, by default False
+            Whether to save videos showing clusters and filtered spots,
+            by default False.
         overwrite : bool, optional
-            Overwrite existing results, by default False
-    
+            Whether to recalculate the combined spot-cluster analysis when
+            results are already loaded, by default False.
+            Does not rerun cluster detection.
+
         Returns
         -------
         tuple
-            clusters_binary : np.ndarray
-                Binary mask of clusters per frame.
+            clusters_binary : dict
+                Binary cluster masks for each cell and frame.
             clusters_frame : pd.DataFrame
-                Cluster labels per frame.
+                Individual cluster measurements.
             results_stats : pd.DataFrame
-                Cluster and spot statistics merged.
-            linked_df : pd.DataFrame
-                Linked clusters per cell.
-            linked_stats : pd.DataFrame
-                Statistics of linked clusters.
+                Combined per-frame cluster and spot statistics.
+            linked_df : pd.DataFrame or None
+                Previously loaded cluster tracking results, if available.
+            linked_stats : pd.DataFrame or None
+                Previously loaded cluster tracking statistics, if available.
             spots_filtered : pd.DataFrame
-                Spots filtered outside clusters.
+                Spots outside clusters, including measured fluorescence intensities.
+
+        Notes
+        -----
+        Cluster detection is not performed by this function. Existing cluster
+        results are required and are loaded automatically when the Cell_Analyzer
+        object is initialized.
+
+        Results are saved in the 'cluster_analysis_spots_filtered' folder
+        within each Run directory.
         """
 
         validate_choice(ch, {'ch0', 'ch1'}, 'ch')
-        validate_choice(th_method, {'li', 'li_local', 'otsu', 'otsu_local'}, 'th_method')
-        validate_choice(global_th_mode, {'max', 'full', 'median', 'last'}, 'global_th_mode')
+        
 
         if ch == 'ch0':
             wl = self.clusters.ch0_wl
@@ -215,61 +218,46 @@ class Combined_analysis:
         # Use tqdm over the list of steps
         for step in tqdm(steps, desc="combine_spots_clusters progress", ncols=100):
             if step == "Cluster analysis":
-                if (self.clusters.result_cluster_analysis[wl] is not None and
-                    self.clusters.summary_cluster_analysis[wl] is not None and
-                    not overwrite):
-                    # Already loaded, skip analysis
-                    clusters_binary = self.clusters.clusters_binary[wl]
-                    clusters_frame = self.clusters.result_cluster_analysis[wl]
-                    results_stats = self.clusters.summary_cluster_analysis[wl]
-                    linked_df = self.clusters.linked_clusters[wl]
-                    linked_stats = self.clusters.linked_clusters_stats[wl]
-                else:
-                    clusters_binary, clusters_frame, results_stats, linked_df, linked_stats = \
-                        self.clusters.analyze_clusters_protein(min_size=min_size, ch=ch, th_method=th_method,
-                                                           global_th_mode=global_th_mode, window_size=window_size,
-                                                           p=p, q=q, save_videos=False, overwrite=overwrite)
+                clusters_binary = self.clusters.clusters_binary[wl]
+                clusters_frame = self.clusters.result_cluster_analysis[wl]
+                results_stats = self.clusters.summary_cluster_analysis[wl]
+                linked_df = self.clusters.linked_clusters[wl]
+                linked_stats = self.clusters.linked_clusters_stats[wl]
+
+                if clusters_binary is None or clusters_frame is None or results_stats is None:
+                    raise RuntimeError(f"Cluster analysis for {wl} not found. Run analyze_clusters_dog() or analyze_clusters_protein() first.")
             elif step == "Remove spots within clusters":
-                try:
-                    spots_filtered = self.remove_spots_within_clusters(ch)
-                except Exception as exc:
-                    spots_filtered = pd.DataFrame(columns=['cell_id', 't', 'x_per_cell', 'y_per_cell'])
-                    print(
-                        f"Warning: could not remove spots within clusters.\n"
-                        f"Channel: {ch}\n"
-                        f"Folder: {self.folder}\n"
-                        f"Error: {type(exc).__name__}: {exc}"
-                    )
+                spots_filtered = self.remove_spots_within_clusters(ch)
+                # try:
+                #     spots_filtered = self.remove_spots_within_clusters(ch)
+                # except Exception as exc:
+                #     spots_filtered = pd.DataFrame(columns=['cell_id', 't', 'x_per_cell', 'y_per_cell'])
+                #     print(
+                #         f"Warning: could not remove spots within clusters.\n"
+                #         f"Channel: {ch}\n"
+                #         f"Folder: {self.folder}\n"
+                #         f"Error: {type(exc).__name__}: {exc}"
+                #     )
                     
     
             elif step == "Compute mean intensity":
-                mean_intensities = []
-                norm_mean_intensities = []
-            
+                spots_filtered["intensity_im"] = np.nan
+                spots_filtered["norm_intensity_im"] = np.nan
+
                 for cell_id, group in spots_filtered.groupby('cell_id'):
                     img_stack = self.clusters.sep_cells[cell_id][wl]
-                    # mask = create_mask(img_stack[0].shape, self.clusters._contours[cell_id])
-                    median_int_out = np.median([
-                                np.median(
-                                    img[~create_mask(
-                                        img.shape,
-                                        self.clusters._get_contour(cell_id, frame_num)
-                                    )]
-                                )
-                                for frame_num, img in enumerate(img_stack)
-                            ])
-            
+
+                    cell_mask = create_mask(img_stack[0].shape, self.clusters._get_contour(cell_id, 0))
+                    median_int_out = np.median([np.median(img[~cell_mask]) for img in img_stack])
+
                     for idx, spot in group.iterrows():
                         t = int(spot["t"])
-                        x = spot["x_per_cell"]
-                        y = spot["y_per_cell"]
-                        img = img_stack[t]
-                        mean_intensity = compute_mean_intensity(img, x, y, window=1)
-                        mean_intensities.append(mean_intensity)
-                        norm_mean_intensities.append(mean_intensity / median_int_out)
-            
-                spots_filtered["intensity_im"] = mean_intensities
-                spots_filtered["norm_intensity_im"] = norm_mean_intensities
+                        x, y = spot["x_per_cell"], spot["y_per_cell"]
+
+                        mean_intensity = compute_mean_intensity(img_stack[t], x, y, window=1)
+
+                        spots_filtered.loc[idx, "intensity_im"] = mean_intensity
+                        spots_filtered.loc[idx, "norm_intensity_im"] = mean_intensity / median_int_out
 
     
             elif step == "Merge stats & save videos":
@@ -289,11 +277,7 @@ class Combined_analysis:
                 expected_columns = ['num_spots', 'spot_mean_intensity','spot_std_intensity','spot_norm_mean_intensity','spot_norm_std_intensity']
 
                 try:
-                    results_stats = results_stats.merge(
-                        spot_stats,
-                        on=['cell_id', 'frame'],
-                        how='left'
-                    )
+                    results_stats = results_stats.merge(spot_stats, on=['cell_id', 'frame'], how='left')
                 
                 except Exception as e:
                     print(f"Merge failed likely due to the lack of clusters: {e}")

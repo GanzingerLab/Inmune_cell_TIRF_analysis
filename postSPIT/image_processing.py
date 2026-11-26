@@ -1,13 +1,16 @@
 import cv2
 import numpy as np
 from .io_utils import validate_choice
-
+from concurrent.futures import ThreadPoolExecutor
 from skimage.draw import polygon
 from skimage.filters import threshold_li, threshold_otsu
 from skimage.morphology import (
+    closing, 
+    dilation, 
     binary_closing,
     remove_small_holes,
     remove_small_objects,
+    disk
 )
 
 
@@ -77,61 +80,35 @@ def otsu_threshold(image, mode="max"):
     return binary_closing(image > thresh)
 
 
-def phansalkar_threshold(image_stack, radius=15, k=0.25, p=2.0, q=10.0):
+def phansalkar_threshold(image_stack, radius=15, k=0.25, p=2.0, q=10.0, n_workers=8):
     """
-    Apply Phansalkar local thresholding per frame.
-
-    Parameters
-    ----------
-    image_stack : np.ndarray
-        2D or 3D array of images. If 3D, frames are assumed to be on axis 0.
-    radius : int, optional
-        Local window radius. The actual window size is ``2 * radius + 1``.
-    k : float, optional
-        Phansalkar parameter k.
-    p : float, optional
-        Phansalkar parameter p.
-    q : float, optional
-        Phansalkar parameter q.
-
-    Returns
-    -------
-    np.ndarray
-        Binary thresholded image or stack with the same shape as the input.
-
-    Raises
-    ------
-    ValueError
-        If the input is not a 2D or 3D array.
+    Apply Phansalkar local thresholding independently to each frame.
+    Supports 2D images and 3D stacks, with optional multithreading.
     """
     window_size = (radius * 2) + 1
 
     def threshold_single(image):
-        # Normalize frame before estimating local mean/std.
-        image = image / np.max(image) if np.max(image) > 0 else image
+        max_val = np.max(image)
+        image = image / max_val if max_val > 0 else image
 
         mean = cv2.blur(image, (window_size, window_size))
         mean_sq = cv2.blur(image**2, (window_size, window_size))
-        std = np.sqrt(mean_sq - mean**2)
+        std = np.sqrt(np.maximum(mean_sq - mean**2, 0))
 
-        threshold = mean * (
-            1 + p * np.exp(-q * mean) + k * ((std / 0.5) - 1)
-        )
-
+        threshold = mean * (1 + p * np.exp(-q * mean) + k * ((std / 0.5) - 1))
         return image > threshold
 
     if image_stack.ndim == 2:
         return threshold_single(image_stack)
 
     if image_stack.ndim == 3:
-        binary_stack = np.zeros_like(image_stack, dtype=bool)
+        if n_workers == 1:
+            return np.stack([threshold_single(img) for img in image_stack])
 
-        for i in range(image_stack.shape[0]):
-            binary_stack[i] = threshold_single(image_stack[i])
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            return np.stack(list(executor.map(threshold_single, image_stack)))
 
-        return binary_stack
-
-    raise ValueError("Input must be 2D or 3D numpy array")
+    raise ValueError("Input must be a 2D or 3D numpy array")
 
 
 def remove_small_objects_per_frame(stack, min_size=100, connectivity=1):
@@ -285,3 +262,80 @@ def compute_mean_intensity(image, x, y, window=1):
 def contour_min_distance(cnt1, cnt2):
     dists = np.sqrt(np.sum((cnt1[:, None, :] - cnt2[None, :, :]) ** 2, axis=2))
     return np.min(dists)
+
+
+def get_dog_mask(img, sigmas, factor, min_size=15):
+    img = img.astype(np.float32, copy=False)
+
+    low = cv2.GaussianBlur(img, (0, 0), sigmas[0], borderType=cv2.BORDER_REFLECT_101)
+    high = cv2.GaussianBlur(img, (0, 0), sigmas[1], borderType=cv2.BORDER_REFLECT_101)
+    dog = low - high
+
+    positive = dog[dog > 0]
+
+    if positive.size == 0:
+        return np.zeros(img.shape, dtype=bool)
+
+    mask = dog > threshold_li(positive) * factor
+    mask = closing(mask, disk(1))
+
+    return remove_small_objects(mask, min_size=min_size)
+
+def get_dog_masks_parallel(images, small_sigmas=(1, 5), large_sigmas=(1, 30),
+                           small_factor=0.5, large_factor=1.5, n_workers=2):
+
+    def process_frame(img):
+        img = img.astype(np.float32, copy=False)
+
+        sigmas = set(small_sigmas + large_sigmas)
+        gaussians = {s: cv2.GaussianBlur(img, (0, 0), s, borderType=cv2.BORDER_REFLECT_101) for s in sigmas}
+
+        def get_mask(sigmas, factor):
+            dog = gaussians[sigmas[0]] - gaussians[sigmas[1]]
+            positive = dog[dog > 0]
+
+            if positive.size == 0:
+                return np.zeros(img.shape, dtype=bool)
+
+            mask = dog > threshold_li(positive) * factor
+            mask = closing(mask, disk(1))
+            return remove_small_objects(mask, min_size=15)
+
+        return get_mask(small_sigmas, small_factor), get_mask(large_sigmas, large_factor)
+
+    if n_workers == 1:
+        results = [process_frame(img) for img in images]
+    else:
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            results = list(executor.map(process_frame, images))
+
+    return np.stack([r[0] for r in results]), np.stack([r[1] for r in results])
+
+def reconstruct_clusters_parallel(images, cell_masks, masks_small, masks_large, expansion=5, min_size=98, n_workers=2):
+    footprint = disk(expansion)
+
+    def process_frame(frame):
+        img = images[frame].astype(np.float32, copy=False)
+        cell_mask = cell_masks[frame]
+
+        if not cell_mask.any():
+            return np.zeros(img.shape, dtype=bool)
+
+        mask_combined = (masks_small[frame] | masks_large[frame]) & cell_mask
+
+        if not mask_combined.any():
+            return np.zeros(img.shape, dtype=bool)
+
+        expanded = dilation(mask_combined, footprint) & cell_mask
+        threshold = threshold_li(img[expanded])
+        mask_final = ((img > threshold) & expanded) | mask_combined
+
+        return remove_small_objects(mask_final, min_size=min_size)
+
+    if n_workers == 1:
+        results = [process_frame(frame) for frame in range(len(images))]
+    else:
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            results = list(executor.map(process_frame, range(len(images))))
+
+    return np.stack(results)

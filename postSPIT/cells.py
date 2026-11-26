@@ -16,6 +16,7 @@ from natsort import natsorted
 from pandas.errors import PerformanceWarning
 from picasso.io import load_movie
 from scipy.optimize import curve_fit
+from joblib import Parallel, delayed
 
 from skimage.measure import label, regionprops
 from skimage.morphology import (
@@ -31,6 +32,9 @@ from .image_processing import (
     create_mask,
     paint_square,
     contour_min_distance,
+    get_dog_mask, 
+    get_dog_masks_parallel,
+    reconstruct_clusters_parallel
 )
 
 from .stats_utils import (
@@ -38,7 +42,7 @@ from .stats_utils import (
     classify_maturation,
     select_frames,
     summarize_clusters_per_cell_frame,
-    summarize_per_track,
+    extract_cluster_properties,
 )
 from skimage.filters import difference_of_gaussians, threshold_li
 from skimage.morphology import closing, dilation, disk, remove_small_objects
@@ -260,7 +264,7 @@ class Cell_Analyzer:
             self.contours[(cell_id, frame)] = corr
             self.centroids[(cell_id, frame)] = corr_cen
     def analyze_clusters_protein(self, min_size=80, ch='ch0', th_method='li_local', global_th_mode='max',
-                             window_size=15, p=2, q=6, save_videos=False, overwrite = False):
+                             window_size=15, p=2, q=6, save_videos=False, overwrite=False, save=False, n_workers = 8):
         """
         Detect and analyze protein clusters per cell using thresholding and tracking.
 
@@ -301,8 +305,6 @@ class Cell_Analyzer:
         validate_choice(th_method, {'li', 'li_local', 'otsu', 'otsu_local'}, 'th_method')
         validate_choice(global_th_mode, {'max', 'full', 'median', 'last'}, 'global_th_mode')
         clusters_binary = {}
-        all_props = []
-        self.cluster_contours = {}  # Store contours by cell/frame/label
     
         # map channel string to actual wavelength key
         if ch == 'ch0':
@@ -313,17 +315,9 @@ class Cell_Analyzer:
             wl = ch  # ch is already a valid wavelength key
         else:
             raise ValueError(f"Invalid channel {ch}. Must be 'ch0', 'ch1', or one of {list(self.images.keys())}")
-        if (self.result_cluster_analysis[wl] is not None and
-            self.summary_cluster_analysis[wl] is not None and
-            self.linked_clusters[wl] is not None and
-            self.linked_clusters_stats[wl] is not None and
-            not overwrite):
+        if not overwrite and self.result_cluster_analysis[wl] is not None and self.summary_cluster_analysis[wl] is not None:
             print(f"Skipping {wl}: analysis results already loaded in memory.")
-            return (None, 
-                    self.result_cluster_analysis[wl],
-                    self.summary_cluster_analysis[wl],
-                    self.linked_clusters[wl],
-                    self.linked_clusters_stats[wl])
+            return self.clusters_binary[wl], self.result_cluster_analysis[wl], self.summary_cluster_analysis[wl]
     
         for cell_id in self.sep_cells.keys():
             to_work = self.sep_cells[cell_id][wl]
@@ -336,7 +330,7 @@ class Cell_Analyzer:
                 raise ValueError(f'{th_method} is not a valid thresholding method')
     
             if 'local' in th_method:
-                local_mask = phansalkar_threshold(to_work, radius=window_size, p=p, q=q)
+                local_mask = phansalkar_threshold(to_work, radius=window_size, p=p, q=q, n_workers=n_workers)
                 binary_stack = remove_small_objects_per_frame(
                     binary_opening(binary_closing(local_mask & global_mask)), min_size=min_size
                 )
@@ -344,136 +338,34 @@ class Cell_Analyzer:
                 binary_stack = global_mask
     
             clusters_binary[cell_id] = binary_stack
-            # mask = create_mask(to_work[0].shape, self.contour[cell_id])
+        result, results_stats, self.cluster_contours = extract_cluster_properties(clusters_binary, self.sep_cells, wl, self.nm2px, self._get_contour, self._get_centroid, min_size=min_size) 
     
-            if cell_id not in self.cluster_contours:
-                self.cluster_contours[cell_id] = {}
-            
-            for frame_num, binary_frame in enumerate(binary_stack):
-                if frame_num not in self.cluster_contours[cell_id]:
-                    self.cluster_contours[cell_id][frame_num] = {}
-    
-                mask = create_mask(to_work[0].shape, self._get_contour(cell_id, frame_num))
-                labeled = label(binary_frame)
-
-                for region in regionprops(labeled, intensity_image=to_work[frame_num]):
-                    if region.area <= min_size:
-                        continue
-    
-                    region_mask = (labeled == region.label).astype(np.uint8)
-                    contours, _ = cv2.findContours(region_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-                    if len(contours) == 0:
-                        contour_list = np.array([]).reshape(0, 2)
-                        perimeter = np.nan
-                        solidity = np.nan
-                        area = 0
-                    else:
-                        cnt = max(contours, key=cv2.contourArea)
-                        perimeter = cv2.arcLength(cnt, True)
-                        contour_list = cnt.reshape(-1, 2)
-                        area = cv2.contourArea(cnt)
-                        hull_area = cv2.contourArea(cv2.convexHull(cnt))
-                        solidity = area / hull_area if hull_area > 0 else np.nan
-    
-                    circularity = (4 * np.pi * area / (perimeter ** 2)) if perimeter and perimeter > 1e-6 else np.nan
-    
-                    M = cv2.moments(region_mask)
-                    if M['m00'] != 0:
-                        centroid_row = M['m01'] / M['m00']
-                        centroid_col = M['m10'] / M['m00']
-                    else:
-                        centroid_row, centroid_col = region.centroid
-    
-                    bbox = region.bbox
-                    region_mask_bool = (labeled == region.label)
-                    median_int_out = np.median(to_work[frame_num][~mask])
-                    median_int = np.median(to_work[frame_num][region_mask_bool])
-                    sum_int = np.sum(to_work[frame_num][region_mask_bool])
-    
-                    minr, minc, maxr, maxc = bbox
-                    bbox_height = maxr - minr
-                    bbox_width = maxc - minc
-                    aspect_ratio = region.major_axis_length / region.minor_axis_length if region.minor_axis_length > 0 else np.nan
-                    extent = region.area / (bbox_height * bbox_width) if bbox_height > 0 and bbox_width > 0 else np.nan
-                    eccentricity = region.eccentricity if hasattr(region, 'eccentricity') else np.nan
-    
-                    props = {
-                        'cell_id': cell_id,
-                        'frame': frame_num,
-                        'area': area * self.nm2px ** 2,
-                        'sum_int': sum_int,
-                        'norm_sum_int': sum_int / median_int_out,
-                        'med_int': median_int,
-                        'norm_med_int': median_int / median_int_out,
-                        'dist_cent': np.linalg.norm(np.array([centroid_row, centroid_col]) - self._get_centroid(cell_id, frame_num)) * self.nm2px,
-                        'solidity': solidity,
-                        'perimeter': perimeter * self.nm2px,
-                        'circularity': circularity,
-                        'centroid_row': centroid_row,
-                        'centroid_col': centroid_col,
-                        'bbox_min_row': bbox[0],
-                        'bbox_min_col': bbox[1],
-                        'bbox_max_row': bbox[2],
-                        'bbox_max_col': bbox[3],
-                        'contour': contour_list,
-                        'label': region.label,
-                        'aspect_ratio': aspect_ratio,
-                        'extent': extent,
-                        'eccentricity': eccentricity
-                    }
-                    all_props.append(props)
-                    self.cluster_contours[cell_id][frame_num][region.label] = contour_list
-    
-        result = pd.DataFrame(all_props)
-        if result.empty: 
-            results_stats = pd.DataFrame()
-            # linked_df = pd.DataFrame()
-            # linked_stats = pd.DataFrame()
-        else:
-            results_stats = summarize_clusters_per_cell_frame(result)
-            # df_tp = result.rename(columns={"centroid_col": "x", "centroid_row": "y", "norm_sum_int": "mass", "area": "size"})
-            # df_tp['label'] = result['label']
-    
-            # linked_all = []
-            # for cell_id, df_cell in df_tp.groupby('cell_id'):
-            #     linked = tp.link_df(df_cell, search_range=25, memory=0, adaptive_step=0.95,
-            #                         adaptive_stop=2, link_strategy='hybrid')
-            #     linked['cell_id'] = cell_id
-            #     linked_all.append(linked)
-    
-            # linked_df = pd.concat(linked_all, ignore_index=True)
-            # linked_stats = summarize_per_track(linked_df)
+        self.clusters_binary[wl] = clusters_binary
         self.result_cluster_analysis[wl] = result
         self.summary_cluster_analysis[wl] = results_stats
-        # self.linked_clusters[wl] = linked_df
-        # self.linked_clusters_stats[wl] = linked_stats
-        
+
         if save_videos:
             self._save_centroid_videos_per_cell(clusters_binary, result, self.sep_cells, ch=ch, square_size=2)
-        if self.folder is not None:
+
+        # Save results only when requested
+        if save:
             output_dir = os.path.join(self.folder, 'cluster_analysis')
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-        
-        
-        np.save(os.path.join(output_dir, f'clusters_binary_{wl}'), clusters_binary, allow_pickle=True)
-        if not result.empty:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", PerformanceWarning)
-                result.to_hdf(os.path.join(output_dir, f'clusters_{wl}.hdf'), key='df')   
-        if not results_stats.empty:
-            results_stats.to_csv(os.path.join(output_dir, f'clusters_stats_{wl}.csv'), index = False) 
-        # if not linked_df.empty:
-        #     with warnings.catch_warnings():
-        #         warnings.simplefilter("ignore", PerformanceWarning)
-        #         linked_df.to_hdf(os.path.join(output_dir, f'clusters_tracks_{wl}.hdf'), key = 'df')   
-        # if not linked_stats.empty:
-        #     linked_stats.to_csv(os.path.join(output_dir, f'clusters_tracks_stats_{wl}.csv'), index = False) 
-        return clusters_binary, result, results_stats#, linked_df, linked_stats
+            os.makedirs(output_dir, exist_ok=True)
+
+            np.save(os.path.join(output_dir, f'clusters_binary_{wl}.npy'), clusters_binary, allow_pickle=True)
+
+            if not result.empty:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", PerformanceWarning)
+                    result.to_hdf(os.path.join(output_dir, f'clusters_{wl}.hdf'), key='df')
+
+            if not results_stats.empty:
+                results_stats.to_csv(os.path.join(output_dir, f'clusters_stats_{wl}.csv'), index=False)
+
+        return clusters_binary, result, results_stats
     def analyze_clusters_dog(self, ch='ch0', small_sigmas=(1, 5), large_sigmas=(1, 30),
                          small_factor=0.5, large_factor=1.5, expansion=5, min_size=98,
-                         save=True):
+                         overwrite=False, save=False, n_workers=4):
 
         # Select channel
         if ch == 'ch0':
@@ -485,16 +377,12 @@ class Cell_Analyzer:
         else:
             raise ValueError(f"Invalid channel {ch}. Available: {list(self.images.keys())}")
 
-        def get_dog_mask(img, sigmas, factor):
-            dog = difference_of_gaussians(img, *sigmas)
-            positive = dog[dog > 0]
+        if wl not in self.images:
+            raise ValueError(f"Channel {wl} not available. Available: {list(self.images.keys())}")
 
-            if positive.size == 0:
-                return np.zeros(img.shape, dtype=bool)
-
-            mask = dog > threshold_li(positive) * factor
-            mask = closing(mask, disk(1))
-            return remove_small_objects(mask, min_size=15)
+        if not overwrite and self.result_cluster_analysis[wl] is not None and self.summary_cluster_analysis[wl] is not None:
+            print(f"Skipping {wl}: analysis results already loaded in memory.")
+            return self.clusters_binary[wl], self.result_cluster_analysis[wl], self.summary_cluster_analysis[wl]
 
         # Load dynamic masks
         with np.load(os.path.join(self.folder, 'cell_detection', 'rois.npz')) as f:
@@ -502,8 +390,10 @@ class Cell_Analyzer:
 
         # Extract crop coordinates from ROI files
         bboxes = {}
+
         for roi in natsorted(glob(os.path.join(self.folder, '*.roi'))):
             match = re.search(r'roi(\d+)\.roi$', roi)
+
             if match is None:
                 continue
 
@@ -512,63 +402,54 @@ class Cell_Analyzer:
 
             x0, x1 = int(min(contour[:, 0])), int(max(contour[:, 0]))
             y0, y1 = int(min(contour[:, 1])), int(max(contour[:, 1]))
+
             bboxes[cell_id] = [x0, x1, y0, y1]
 
         clusters_binary = {}
 
         for cell_id in self.sep_cells:
+
             to_work = self.sep_cells[cell_id][wl]
             masks = np.zeros(to_work.shape, dtype=bool)
 
             x0, x1, y0, y1 = bboxes[cell_id]
             cell_rois = rois[:, y0:y1, x0:x1] == cell_id
 
+            masks_small, masks_large = get_dog_masks_parallel(
+                to_work, small_sigmas=small_sigmas, large_sigmas=large_sigmas,
+                small_factor=small_factor, large_factor=large_factor, n_workers=n_workers
+            )
+
             if cell_rois.shape != to_work.shape:
                 raise ValueError(f'Cell {cell_id}: image {to_work.shape}, mask {cell_rois.shape}')
 
-            for frame in range(len(to_work)):
-                img = to_work[frame].astype(np.float32)
-                cell_mask = cell_rois[frame]
 
-                if not cell_mask.any():
-                    continue
-
-                # Small and large DoG
-                mask_small = get_dog_mask(img, small_sigmas, small_factor)
-                mask_large = get_dog_mask(img, large_sigmas, large_factor)
-
-                # Combine detections and restrict to dynamic cell mask
-                mask_combined = (mask_small | mask_large) & cell_mask
-
-                if not mask_combined.any():
-                    continue
-
-                # Expand detections
-                expanded = dilation(mask_combined, disk(expansion)) & cell_mask
-
-                # Intensity threshold using expanded mask
-                threshold = threshold_li(img[expanded])
-                mask_threshold = (img > threshold) & expanded
-
-                # Preserve original DoG detections
-                mask_final = mask_threshold | mask_combined
-
-                # Remove small clusters
-                masks[frame] = remove_small_objects(mask_final, min_size=min_size)
-
+            masks = reconstruct_clusters_parallel(to_work, cell_rois, masks_small, masks_large, expansion=expansion, min_size=min_size, n_workers=n_workers)
+                
             clusters_binary[cell_id] = masks
+        result, results_stats, self.cluster_contours = extract_cluster_properties(clusters_binary, self.sep_cells, wl, self.nm2px, self._get_contour, self._get_centroid, min_size=min_size)
+        # Store results in object
+            # Store results in object
+        self.clusters_binary[wl] = clusters_binary
+        self.result_cluster_analysis[wl] = result
+        self.summary_cluster_analysis[wl] = results_stats
 
-        # Store in object
-        self.clusters_binary_dog = getattr(self, 'clusters_binary_dog', {})
-        self.clusters_binary_dog[wl] = clusters_binary
-
-        # Save
+        # Save results only when requested
         if save:
             output_dir = os.path.join(self.folder, 'cluster_analysis')
             os.makedirs(output_dir, exist_ok=True)
-            np.save(os.path.join(output_dir, f'clusters_binary_dog_{wl}.npy'), clusters_binary, allow_pickle=True)
 
-        return clusters_binary
+            np.save(os.path.join(output_dir, f'clusters_binary_{wl}.npy'), clusters_binary, allow_pickle=True)
+
+            if not result.empty:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", PerformanceWarning)
+                    result.to_hdf(os.path.join(output_dir, f'clusters_{wl}.hdf'), key='df')
+
+            if not results_stats.empty:
+                results_stats.to_csv(os.path.join(output_dir, f'clusters_stats_{wl}.csv'), index=False)
+
+        return clusters_binary, result, results_stats
     def predict_maturation(self, model, preprocess_frame_func = None, save_plot = False, 
                            N_rolling = 5, ch = 'ch0', r2_thresh = 0.75, low_thresh=0.4, high_thresh=0.6, overwrite = False):
         """

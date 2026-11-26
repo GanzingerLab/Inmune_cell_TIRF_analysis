@@ -115,6 +115,30 @@ class Dataset_combined_analysis:
                 if verbose:
                     print(f"Failed cluster analysis on {run_path}: {e}")
                 self.failed_folders.append([run_path, e, 'analyze_clusters_protein'])
+    def analyze_clusters_dog(self, ch='ch0', small_sigmas=(1, 5), large_sigmas=(1, 30),
+                         small_factor=0.5, large_factor=1.5, expansion=5, min_size=98,
+                         n_workers=4, overwrite=False, verbose=True):
+
+        for run_path in self.run_paths:
+            try:
+                if verbose:
+                    print(f'Analyzing clusters: {run_path}')
+
+                ca = Combined_analysis(run_path, ch0_hint=self.ch0_hint, ch1_hint=self.ch1_hint, verbose=verbose)
+
+                if ca.clusters is None:
+                    raise RuntimeError("Cell_Analyzer initialization failed.")
+
+                ca.clusters.analyze_clusters_dog(
+                    ch=ch, small_sigmas=small_sigmas, large_sigmas=large_sigmas,
+                    small_factor=small_factor, large_factor=large_factor,
+                    expansion=expansion, min_size=min_size, n_workers=n_workers,
+                    overwrite=overwrite, save=True
+                )
+
+            except Exception as e:
+                print(f"Failed DoG analysis on {run_path}: {e}")
+                self.failed_folders.append([run_path, e, 'analyze_clusters_dog'])
     def predict_maturation(self, model, preprocess_frame_func=None, save_plot=False, 
                        N_rolling=5, ch='ch0', r2_thresh=0.75, low_thresh=0.4, high_thresh=0.6,
                        overwrite=False, verbose=True):
@@ -141,36 +165,27 @@ class Dataset_combined_analysis:
                 if verbose:
                     print(f"Failed maturation prediction on {run_path}: {e}")
                 self.failed_folders.append([run_path, e, 'predict_maturation'])
-    def combine_spots_clusters(self, min_size=80, ch='ch0', th_method='li_local',
-                    global_th_mode='max', window_size=15, p=2, q=6, save_videos=True, verbose=True, overwrite = False):
+    def combine_spots_clusters(self, ch='ch0', save_videos=False, verbose=True, overwrite=False):
         """
         Run Combined_analysis.combine_spots_clusters on all runs in this dataset.
         Saves outputs in each run folder automatically.
         """
         validate_choice(ch, {'ch0', 'ch1'}, 'ch')
-        validate_choice(th_method,{'li', 'li_local', 'otsu', 'otsu_local'},'th_method')
-        validate_choice(global_th_mode, {'max', 'full', 'median', 'last'}, 'global_th_mode')
+
         for run_path in self.run_paths:
             try:
-                print(f'Analyzing: {run_path}')
-                ca = Combined_analysis(run_path,ch0_hint=self.ch0_hint, ch1_hint=self.ch1_hint, verbose=verbose)
-                if ca.clusters is None:
-                    if verbose:
-                        print(f"Skipping {run_path}: cluster initialization failed.")
-                    self.failed_folders.append(run_path)
-                    continue
+                if verbose:
+                    print(f'Analyzing: {run_path}')
 
-                _ = ca.combine_spots_clusters(
-                    min_size=min_size, ch=ch, th_method=th_method,
-                    global_th_mode=global_th_mode, window_size=window_size,
-                    p=p, q=q, save_videos=save_videos, overwrite=overwrite
-                )
-                # if verbose:
-                    # print(f"Finished combine_spots_clusters for {run_path}")
+                ca = Combined_analysis(run_path, ch0_hint=self.ch0_hint, ch1_hint=self.ch1_hint, verbose=verbose)
+
+                if ca.clusters is None:
+                    raise RuntimeError("Cell_Analyzer initialization failed.")
+
+                ca.combine_spots_clusters(ch=ch, save_videos=save_videos, overwrite=overwrite)
 
             except Exception as e:
-                if verbose:
-                    print(f"Failed on {run_path}: {e}")
+                print(f"Failed combine_spots_clusters on {run_path}: {e}")
                 self.failed_folders.append([run_path, e, 'combine_spots_clusters'])
                 
     def retrack(self, verbose=True, overwrite = False):

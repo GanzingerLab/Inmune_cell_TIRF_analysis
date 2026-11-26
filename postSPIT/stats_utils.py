@@ -1,9 +1,115 @@
+import cv2
 import numpy as np
 import pandas as pd
 
 from scipy.stats import linregress
 from sklearn.metrics import r2_score
+from skimage.measure import label, regionprops
+from .image_processing import create_mask
 
+
+def extract_cluster_properties(clusters_binary, sep_cells, wl, nm2px, get_contour, get_centroid, min_size=80):
+
+    all_props = []
+    cluster_contours = {}
+
+    for cell_id, binary_stack in clusters_binary.items():
+        to_work = sep_cells[cell_id][wl]
+        cluster_contours[cell_id] = {}
+        cell_mask = create_mask(to_work[0].shape, get_contour(cell_id, 0))
+        background_medians = np.median(to_work[:, ~cell_mask], axis=1)
+
+        for frame_num, binary_frame in enumerate(binary_stack):
+            cluster_contours[cell_id][frame_num] = {}
+
+            img = to_work[frame_num]
+            labeled = label(binary_frame)
+
+            if not labeled.any():
+                continue
+
+            # Background outside cell (same as original method)
+            median_int_out = median_int_out = background_medians[frame_num]
+
+            for region in regionprops(labeled, intensity_image=img):
+                if region.area <= min_size:
+                    continue
+
+                region_mask = (labeled == region.label).astype(np.uint8)
+                contours, _ = cv2.findContours(region_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+                if len(contours) == 0:
+                    contour_list = np.array([]).reshape(0, 2)
+                    perimeter = np.nan
+                    solidity = np.nan
+                    area = 0
+                else:
+                    cnt = max(contours, key=cv2.contourArea)
+                    perimeter = cv2.arcLength(cnt, True)
+                    contour_list = cnt.reshape(-1, 2)
+                    area = cv2.contourArea(cnt)
+                    hull_area = cv2.contourArea(cv2.convexHull(cnt))
+                    solidity = area / hull_area if hull_area > 0 else np.nan
+
+                circularity = (4 * np.pi * area / perimeter**2) if perimeter and perimeter > 1e-6 else np.nan
+
+                M = cv2.moments(region_mask)
+                if M['m00'] != 0:
+                    centroid_row = M['m01'] / M['m00']
+                    centroid_col = M['m10'] / M['m00']
+                else:
+                    centroid_row, centroid_col = region.centroid
+
+                bbox = region.bbox
+                region_mask_bool = labeled == region.label
+
+                median_int = np.median(img[region_mask_bool])
+                sum_int = np.sum(img[region_mask_bool])
+
+                minr, minc, maxr, maxc = bbox
+                bbox_height = maxr - minr
+                bbox_width = maxc - minc
+
+                aspect_ratio = region.major_axis_length / region.minor_axis_length if region.minor_axis_length > 0 else np.nan
+                extent = region.area / (bbox_height * bbox_width) if bbox_height > 0 and bbox_width > 0 else np.nan
+                eccentricity = region.eccentricity
+
+                props = {
+                    'cell_id': cell_id,
+                    'frame': frame_num,
+                    'area': area * nm2px**2,
+                    'sum_int': sum_int,
+                    'norm_sum_int': sum_int / median_int_out,
+                    'med_int': median_int,
+                    'norm_med_int': median_int / median_int_out,
+                    'dist_cent': np.linalg.norm(np.array([centroid_row, centroid_col]) - get_centroid(cell_id, frame_num)) * nm2px,
+                    'solidity': solidity,
+                    'perimeter': perimeter * nm2px,
+                    'circularity': circularity,
+                    'centroid_row': centroid_row,
+                    'centroid_col': centroid_col,
+                    'bbox_min_row': bbox[0],
+                    'bbox_min_col': bbox[1],
+                    'bbox_max_row': bbox[2],
+                    'bbox_max_col': bbox[3],
+                    'contour': contour_list,
+                    'label': region.label,
+                    'aspect_ratio': aspect_ratio,
+                    'extent': extent,
+                    'eccentricity': eccentricity
+                }
+
+                all_props.append(props)
+                cluster_contours[cell_id][frame_num][region.label] = contour_list
+
+    result = pd.DataFrame(all_props)
+
+    if result.empty:
+        results_stats = pd.DataFrame()
+    else:
+        results_stats = summarize_clusters_per_cell_frame(result)
+
+    return result, results_stats, cluster_contours
 
 def weighted_mean(x, weights):
     """
